@@ -21,9 +21,12 @@ Rate lookup logic
 
 Output: output/DB_NL_with_shipping_cost.xlsx with the requested columns
 (Sending WHS Code, ZIP, Customer Name, # of Pallets per line) plus the
-matched Zone and Shipping Cost. Rows whose ZIP could not be matched to a
-zone (bad data in the source file, e.g. a ZIP field containing "3c block"
-instead of a postal code) are left blank and flagged in the Note column.
+matched Zone, Shipping Cost and Family Type, with an active AutoFilter
+over the whole table. Rows whose ZIP could not be matched to a zone (bad
+data in the source file, e.g. a ZIP field containing "3c block" instead
+of a postal code) are flagged in the Note column; a small number of these
+(the Italy "3c/4c block" lines) have a manually supplied cost in
+MANUAL_COST_OVERRIDES below, provided by the user from the actual invoice.
 """
 import os
 import re
@@ -38,6 +41,35 @@ DATA_FILE = os.path.join(BASE_DIR, "data", "DB_NL.xlsx")
 OUT_FILE = os.path.join(BASE_DIR, "output", "DB_NL_with_shipping_cost.xlsx")
 
 MAX_EP = 33  # last row in every price sheet = "Full load" bracket
+
+# Manual cost overrides (EUR) for shipment lines whose ZIP could not be
+# resolved to a rate zone automatically. Keyed by the row number in the
+# "DB" sheet of data/DB_NL.xlsx. Supplied by the user from the actual
+# invoiced cost for these BayWa (Italy) "3c/4c block" lines.
+MANUAL_COST_OVERRIDES = {
+    78: 2100,
+    84: 240,
+    753: 1410,
+    754: 411,
+    755: 240,
+    756: 240,
+    757: 240,
+    758: 240,
+    759: 240,
+    760: 411,
+    761: 411,
+    762: 411,
+    763: 240,
+    764: 240,
+    765: 240,
+    766: 240,
+    767: 240,
+    768: 240,
+    769: 240,
+    770: 240,
+    771: 240,
+    772: 411,
+}
 
 
 def parse_price_book(path):
@@ -123,6 +155,7 @@ def main():
     col_pallets = idx['# of Pallets per line']
     col_country_code = idx['Destination country code']
     col_country = idx['Destination country']
+    col_family_type = idx['Family Type']
 
     out_wb = openpyxl.Workbook()
     out_ws = out_wb.active
@@ -130,7 +163,7 @@ def main():
 
     out_headers = [
         'Sending WHS Code', 'ZIP', 'Customer Name', '# of Pallets per line',
-        'Destination country', 'Zone', 'Shipping Cost (EUR)', 'Note',
+        'Destination country', 'Zone', 'Shipping Cost (EUR)', 'Family Type', 'Note',
     ]
     out_ws.append(out_headers)
     for c in range(1, len(out_headers) + 1):
@@ -145,6 +178,7 @@ def main():
         pallets = ws2.cell(row=r, column=col_pallets).value
         country = ws2.cell(row=r, column=col_country).value
         country_code = ws2.cell(row=r, column=col_country_code).value
+        family_type = ws2.cell(row=r, column=col_family_type).value
 
         if whs is None and zip_code is None and cust is None:
             continue
@@ -155,8 +189,12 @@ def main():
 
         note = ''
         if price is None:
-            note = 'ZIP could not be matched to a rate zone (check source ZIP value)'
-            unmatched.append((r, whs, zip_code, cust, pallets, country, country_code))
+            if r in MANUAL_COST_OVERRIDES:
+                price = MANUAL_COST_OVERRIDES[r]
+                note = 'Manually supplied cost (ZIP is not a valid postal code)'
+            else:
+                note = 'ZIP could not be matched to a rate zone (check source ZIP value)'
+                unmatched.append((r, whs, zip_code, cust, pallets, country, country_code))
 
         out_ws.cell(row=row_out, column=1, value=whs)
         out_ws.cell(row=row_out, column=2, value=zip_code)
@@ -165,7 +203,8 @@ def main():
         out_ws.cell(row=row_out, column=5, value=country)
         out_ws.cell(row=row_out, column=6, value=zone)
         out_ws.cell(row=row_out, column=7, value=price)
-        out_ws.cell(row=row_out, column=8, value=note)
+        out_ws.cell(row=row_out, column=8, value=family_type)
+        out_ws.cell(row=row_out, column=9, value=note)
         row_out += 1
 
     for c, header in enumerate(out_headers, start=1):
@@ -175,6 +214,9 @@ def main():
     for row in out_ws.iter_rows(min_row=2, max_row=out_ws.max_row):
         for cell in row:
             cell.font = arial_font
+
+    last_col_letter = get_column_letter(len(out_headers))
+    out_ws.auto_filter.ref = f"A1:{last_col_letter}{row_out - 1}"
 
     os.makedirs(os.path.dirname(OUT_FILE), exist_ok=True)
     out_wb.save(OUT_FILE)
