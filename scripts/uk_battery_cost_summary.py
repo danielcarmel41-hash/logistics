@@ -22,11 +22,15 @@ because "AG" and "GmbH" differ at the same word position). Customers with
 no Q3 AUGUST data at all (they didn't ship via MNT in August) are listed
 with a zero/blank total and flagged.
 
+No Shipment Number / "PL nr." matching is used anywhere in this script —
+these Backlog lines don't have one yet, and the join is by customer name
+only, per this request.
+
 Output: output/UK_Battery_Cost_Summary.xlsx
   - "Summary"     one row per UK_Battery_Data customer: matched Q3 name,
                    number of Q3 shipments summed, total EUR, total USD.
-  - "Q3 Detail"    every Q3 row that fed into a customer's total, for
-                   verification.
+  - "Q3 Detail"    every Q3 row that fed into a customer's total (by name),
+                   for verification.
 """
 import os
 import re
@@ -145,7 +149,6 @@ def main():
             detail_rows.append({
                 'customer': customer,
                 'q3_ship_to': r['ship_to'],
-                'pl_nr': r['pl_nr'],
                 'country': r['country'],
                 'nr_pal': r['nr_pal'],
                 'rate_eur': r['rate_eur'],
@@ -175,13 +178,13 @@ def main():
     ws.freeze_panes = 'A2'
 
     ws2 = wb.create_sheet('Q3 Detail')
-    headers2 = ['Customer Name (UK/Battery file)', 'Q3 Ship to', 'PL nr.', 'Country', 'Nr. of pal',
+    headers2 = ['Customer Name (UK/Battery file)', 'Q3 Ship to', 'Country', 'Nr. of pal',
                 'Solaredge rate (EUR)', 'Solaredge rate (USD)']
     ws2.append(headers2)
     for c in range(1, len(headers2) + 1):
         ws2.cell(row=1, column=c).font = bold
     for row in detail_rows:
-        ws2.append([row['customer'], row['q3_ship_to'], row['pl_nr'], row['country'], row['nr_pal'],
+        ws2.append([row['customer'], row['q3_ship_to'], row['country'], row['nr_pal'],
                     row['rate_eur'], row['rate_usd']])
     for r in range(2, ws2.max_row + 1):
         for c in range(1, len(headers2) + 1):
