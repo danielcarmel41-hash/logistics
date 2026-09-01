@@ -41,6 +41,16 @@ Two manual overrides sit ahead of the DBS lookup on the TRUCK sheet:
     Hadera and north); the region per delivery city is inferred from
     geography since it isn't in the source data — flagged in the Note
     column for the WH contact to confirm.
+
+Both sheets also carry:
+  - "SH#" (Shipment Number), populated only for Source = "Shipped" lines —
+    Backlog lines have no shipment number yet in the source data ("N/A").
+  - "Cost (USD)", converted from the Cost/Currency columns using the FX
+    rates in FX_TO_USD below (EUR and ILS -> USD; USD is already USD).
+    Rates are a same-day snapshot (mid-market, via web search on the date
+    this script was run — see FX_RATES_ASOF/FX_RATES_SOURCE), not a
+    contracted rate — treat the USD column as indicative and swap in the
+    company's actual rate if one applies.
 """
 import os
 import re
@@ -58,6 +68,23 @@ DBS_FILE = DATA("DBS_Price_list_2026.xlsx")
 MATRIX_FILE = DATA("Ship_Cost_Matrix.xlsx")
 
 MAX_EP = 33
+
+# Same-day mid-market FX snapshot (web search, see docstring). Not a
+# contracted rate — swap in the company's actual rate if one applies.
+FX_RATES_ASOF = '2026-09-01'
+FX_RATES_SOURCE = 'xe.com / investing.com mid-market rates, retrieved 2026-09-01'
+FX_TO_USD = {
+    'EUR': 1.1618,
+    'ILS': 0.3344,
+    'USD': 1.0,
+}
+
+
+def to_usd(cost, currency):
+    if cost is None or currency not in FX_TO_USD:
+        return None
+    return round(cost * FX_TO_USD[currency], 2)
+
 
 # Manual override: user-supplied EUR rates for the recurring BayWa (Italy)
 # lines whose ZIP field holds garbage text ("3c block" / "4c block") instead
@@ -230,8 +257,13 @@ def load_freight_rows():
     return rows
 
 
+def sh_number(row):
+    return row.get('Shipment Number') if row.get('Source') == 'Shipped' else None
+
+
 TRUCK_COLUMNS = [
     ('Source', lambda row, extra: row.get('Source')),
+    ('SH#', lambda row, extra: sh_number(row)),
     ('Sending WHS Code', lambda row, extra: row.get('Sending WHS Code')),
     ('ZIP', lambda row, extra: row.get('Zip')),
     ('Customer Name', lambda row, extra: row.get('Customer Name')),
@@ -241,11 +273,13 @@ TRUCK_COLUMNS = [
     ('Zone', lambda row, extra: extra['zone']),
     ('Cost', lambda row, extra: extra['cost']),
     ('Currency', lambda row, extra: extra['currency']),
+    ('Cost (USD)', lambda row, extra: to_usd(extra['cost'], extra['currency'])),
     ('Note', lambda row, extra: extra['note']),
 ]
 
 SEA_COLUMNS = [
     ('Source', lambda row, extra: row.get('Source')),
+    ('SH#', lambda row, extra: sh_number(row)),
     ('Sending WHS Code', lambda row, extra: row.get('Sending WHS Code')),
     ('ZIP', lambda row, extra: row.get('Zip')),
     ('Customer Name', lambda row, extra: row.get('Customer Name')),
@@ -255,6 +289,7 @@ SEA_COLUMNS = [
     ('Matched Corridor', lambda row, extra: extra['zone']),
     ('Cost', lambda row, extra: extra['cost']),
     ('Currency', lambda row, extra: extra['currency']),
+    ('Cost (USD)', lambda row, extra: to_usd(extra['cost'], extra['currency'])),
     ('Note', lambda row, extra: extra['note']),
 ]
 
@@ -334,6 +369,23 @@ def main():
     wb.remove(wb.active)
     write_sheet(wb, 'TRUCK - DBS Price List', truck_out, TRUCK_COLUMNS)
     write_sheet(wb, 'SEA - Ship Cost Matrix', sea_out, SEA_COLUMNS)
+
+    readme = wb.create_sheet('README', 0)
+    readme.column_dimensions['A'].width = 100
+    bold = Font(name='Arial', bold=True)
+    arial = Font(name='Arial')
+    readme.append(('FX rates used for the "Cost (USD)" column',))
+    readme['A1'].font = bold
+    for cur, rate in FX_TO_USD.items():
+        if cur == 'USD':
+            continue
+        readme.append((f'  1 {cur} = {rate} USD',))
+        readme.cell(row=readme.max_row, column=1).font = arial
+    readme.append((f'  As of: {FX_RATES_ASOF}  —  Source: {FX_RATES_SOURCE}',))
+    readme.cell(row=readme.max_row, column=1).font = arial
+    readme.append(('  This is a same-day market snapshot, not a contracted rate — '
+                    'replace with the company\'s actual FX rate if one applies.',))
+    readme.cell(row=readme.max_row, column=1).font = arial
 
     os.makedirs(os.path.dirname(OUT_FILE), exist_ok=True)
     wb.save(OUT_FILE)
