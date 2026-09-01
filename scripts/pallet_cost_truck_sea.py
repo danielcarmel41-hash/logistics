@@ -29,6 +29,18 @@ Two sheets, split by "Ship Method":
 
 COURIER (UPS) and LAND-DIRECT lines are neither TRUCK nor SEA and are left
 out of both sheets.
+
+Two manual overrides sit ahead of the DBS lookup on the TRUCK sheet:
+  - BayWa r.e. Solar Systems srl (Italy) lines whose ZIP is garbage text
+    ("3c block" / "4c block") use the user-supplied EUR rates by pallet
+    count (BAYWA_IT_OVERRIDES below) instead of the DBS zone lookup, which
+    can never match a non-numeric ZIP.
+  - 3PLCANOT -> Israel (domestic) lines use the user's "Canot Whs." NIS
+    rate card (CANOT_*  below) instead of DBS, which has no Israel sheet.
+    That card is by region (Main Land Gedera-Hadera / Gedera to south /
+    Hadera and north); the region per delivery city is inferred from
+    geography since it isn't in the source data — flagged in the Note
+    column for the WH contact to confirm.
 """
 import os
 import re
@@ -46,6 +58,51 @@ DBS_FILE = DATA("DBS_Price_list_2026.xlsx")
 MATRIX_FILE = DATA("Ship_Cost_Matrix.xlsx")
 
 MAX_EP = 33
+
+# Manual override: user-supplied EUR rates for the recurring BayWa (Italy)
+# lines whose ZIP field holds garbage text ("3c block" / "4c block") instead
+# of a postal code, so the normal DBS zone lookup can never match them.
+BAYWA_IT_CUSTOMER = 'BayWa r.e. Solar Systems srl'
+BAYWA_IT_OVERRIDES = {1: 240, 2: 411, 12: 2100, 13: 1410}
+
+# Manual override: 3PLCANOT -> Israel (domestic) trucking rates, from the
+# user's "Canot Whs." rate card (NIS). A single pallet ships flat at 200 NIS
+# regardless of region; 2-16 pallets take the 8T truck rate; above 16 the
+# 12T truck rate (same NIS figure as 8T on this card). The truck rate itself
+# depends which of the card's three regions the delivery city falls in.
+# Region assignment below is by geography (not in the source data) and
+# should be confirmed with the WH contact.
+CANOT_SINGLE_PALLET_RATE_ILS = 200
+CANOT_REGION_RATE_ILS = {
+    'mainland': 1200,  # "Cannot Whs. - Main Land (Gedera-Hadera)"
+    'south': 1300,     # "Cannot Whs. - Gedera to south"
+    'north': 1400,     # "Cannot Whs. - Hadera and north"
+}
+CANOT_CITY_REGION = {
+    'KIRYAT GAT': 'south',
+    'ASHDOD': 'south',
+    'KADIMA': 'mainland',
+    'EIN HAEMEK': 'north',
+    'BEIT HASHITTA': 'north',
+    'INDUSTRIAL PARK KIDMAT GALIL': 'north',
+}
+
+
+def canot_israel_lookup(city, pallets_roundup):
+    if not isinstance(pallets_roundup, (int, float)):
+        return None, 'ILS', f'Invalid pallet count on this line ({pallets_roundup!r})'
+
+    region = CANOT_CITY_REGION.get((city or '').strip().upper())
+    region_note = (f'Region "{region}" inferred from city {city!r} (not in the source data) — confirm with WH.'
+                   if region else f'City {city!r} not mapped to a Canot region — confirm with WH; not priced.')
+
+    if pallets_roundup == 1:
+        return CANOT_SINGLE_PALLET_RATE_ILS, 'ILS', f'Single-pallet flat rate. {region_note}'
+    if not region:
+        return None, 'ILS', region_note
+    if pallets_roundup <= 16:
+        return CANOT_REGION_RATE_ILS[region], 'ILS', f'8T truck rate, region={region}. {region_note}'
+    return CANOT_REGION_RATE_ILS[region], 'ILS', f'12T truck rate, region={region}. {region_note}'
 
 
 # --------------------------------------------------------------------------
@@ -182,7 +239,8 @@ TRUCK_COLUMNS = [
     ('# of Pallets per line', lambda row, extra: row.get('# of Pallets per line')),
     ('# of Pallets per line roundup', lambda row, extra: row.get('# of Pallets per line roundup')),
     ('Zone', lambda row, extra: extra['zone']),
-    ('Cost (EUR)', lambda row, extra: extra['cost']),
+    ('Cost', lambda row, extra: extra['cost']),
+    ('Currency', lambda row, extra: extra['currency']),
     ('Note', lambda row, extra: extra['note']),
 ]
 
@@ -232,13 +290,25 @@ def main():
 
     truck_out = []
     for row in truck_rows:
-        zone, cost, note = dbs_lookup(
-            dbs_book,
-            row.get('Destination country code'),
-            row.get('Zip'),
-            row.get('# of Pallets per line roundup'),
-        )
-        truck_out.append((row, {'zone': zone, 'cost': cost, 'note': note or ''}))
+        pallets_roundup = row.get('# of Pallets per line roundup')
+        whs = row.get('Sending WHS Code')
+        customer = row.get('Customer Name')
+        zip_code = row.get('Zip')
+
+        if whs == '3PLCANOT' and row.get('Destination country') == 'Israel':
+            cost, currency, note = canot_israel_lookup(row.get('City'), pallets_roundup)
+            zone = 'Canot (domestic IL)'
+        elif customer == BAYWA_IT_CUSTOMER and isinstance(zip_code, str) and 'block' in zip_code.lower():
+            cost = BAYWA_IT_OVERRIDES.get(pallets_roundup)
+            currency = 'EUR' if cost is not None else None
+            zone = 'BayWa IT (manual)'
+            note = ('User-supplied rate for invalid ZIP.' if cost is not None
+                    else f'No user-supplied rate for {pallets_roundup} pallets — please provide.')
+        else:
+            zone, cost, note = dbs_lookup(dbs_book, row.get('Destination country code'), zip_code, pallets_roundup)
+            currency = 'EUR' if cost is not None else None
+
+        truck_out.append((row, {'zone': zone, 'cost': cost, 'currency': currency, 'note': note or ''}))
 
     sea_out = []
     for row in sea_rows:
