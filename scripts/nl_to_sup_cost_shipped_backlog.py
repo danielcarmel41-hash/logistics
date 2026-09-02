@@ -221,9 +221,11 @@ def price_row(row, dbs_book):
     }
 
 
-def apply_battery_q3_override(shipped_out, q3_by_pl_nr):
+def apply_battery_q3_override(shipped_out, q3_by_pl_nr, q3_country_avg):
     """Shipped + Family Type=Battery: replace Cost with Q3 AUGUST col A, matched by
-    Shipment Number = PL nr. (col G). No match -> keep the DBS cost, flagged."""
+    Shipment Number = PL nr. (col G). No match -> fall back to the average Q3 AUGUST
+    rate for that destination country (same estimate used on the Backlog sheet),
+    since these lines have no updated/matching shipment number in Q3 AUGUST."""
     for row in shipped_out:
         if row['family_type'] != 'Battery':
             continue
@@ -232,9 +234,17 @@ def apply_battery_q3_override(shipped_out, q3_by_pl_nr):
             row['cost_eur'] = rate
             row['cost_usd'] = round(rate * EUR_TO_USD, 2)
             row['note'] = 'Battery — cost updated from Q3 AUGUST col A (Solaredge rate EUR), matched by Shipment Number.'
+            continue
+        avg = q3_country_avg.get(row['destination_country'])
+        if avg is not None:
+            row['cost_eur'] = avg
+            row['cost_usd'] = round(avg * EUR_TO_USD, 2)
+            row['note'] = (f"Battery — no Q3 AUGUST shipment matched by Shipment Number; cost is the "
+                            f"average Q3 AUGUST rate for {row['destination_country']} instead.")
         else:
-            prefix = 'Battery — no Q3 AUGUST shipment matched by Shipment Number; cost kept from DBS lookup.'
-            row['note'] = f"{prefix} {row['note']}".strip()
+            row['note'] = (f"Battery — no Q3 AUGUST shipment matched by Shipment Number, and no Q3 "
+                            f"AUGUST shipments to {row['destination_country']} to average either; "
+                            f"cost kept from DBS lookup. {row['note']}").strip()
 
 
 def add_battery_country_estimate(backlog_out, q3_country_avg):
@@ -283,7 +293,7 @@ def main():
     shipped_out = [price_row(r, dbs_book) for r in rows if r.get('Source') == 'Shipped']
     backlog_out = [price_row(r, dbs_book) for r in rows if r.get('Source') == 'Backlog']
 
-    apply_battery_q3_override(shipped_out, q3_by_pl_nr)
+    apply_battery_q3_override(shipped_out, q3_by_pl_nr, q3_country_avg)
     add_battery_country_estimate(backlog_out, q3_country_avg)
 
     wb = openpyxl.Workbook()
@@ -310,7 +320,10 @@ def main():
         ('', arial),
         ('Battery (Family Type) pricing, from data/Q3_prices_AUGUST.xlsx:', bold),
         ('  Shipped: Cost is replaced by Q3 AUGUST column A (Solaredge rate EUR), matched by '
-         'Shipment Number = PL nr. (col G). No match -> DBS-based cost is kept, flagged in Note.', arial),
+         'Shipment Number = PL nr. (col G). No match -> falls back to the average Q3 AUGUST rate '
+         'for that destination country (same estimate as the Backlog columns); only if that '
+         'average is also unavailable does it keep the DBS-based cost. Flagged in Note either way.',
+         arial),
         ('  Backlog: no shipment number to match yet, so three new columns give an ESTIMATE = the '
          'average Q3 AUGUST column A rate for that destination country (across all Q3 shipments to '
          'that country, any customer). Blank for non-Battery rows.', arial),
