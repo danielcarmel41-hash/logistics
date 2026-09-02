@@ -49,6 +49,15 @@ EUR_TO_USD = 1.1618  # same snapshot used across this project (2026-09-01)
 BAYWA_IT_CUSTOMER = 'BayWa r.e. Solar Systems srl'
 BAYWA_IT_OVERRIDES = {1: 240, 2: 411, 12: 2100, 13: 1410}
 
+# 3 "General Customer" lines have no ZIP at all in the source data, only a
+# City — filled in from the city's real/main postal code so the normal DBS
+# zone lookup can run. (Taxenbach, Austria = 5660; Ljubljana, Slovenia =
+# 1000, its central postal code.)
+CITY_ZIP_FALLBACK = {
+    ('AT', 'Taxenbach'): '5660',
+    ('SI', 'Ljubljana'): '1000',
+}
+
 
 def load_q3_battery_data():
     """PL nr. -> Solaredge rate EUR (col A), and country -> average Solaredge rate EUR."""
@@ -192,6 +201,13 @@ def price_row(row, dbs_book):
     pallets = row.get('# of Pallets per line')
     customer = row.get('Customer Name')
     zip_code = row.get('Zip')
+    fallback_used = False
+
+    if not zip_code:
+        fallback = CITY_ZIP_FALLBACK.get((row.get('Destination country code'), row.get('City')))
+        if fallback:
+            zip_code = fallback
+            fallback_used = True
 
     if customer == BAYWA_IT_CUSTOMER and isinstance(zip_code, str) and 'block' in zip_code.lower():
         cost_eur = BAYWA_IT_OVERRIDES.get(pallets)
@@ -203,6 +219,9 @@ def price_row(row, dbs_book):
             dbs_book, row.get('Destination country code'), zip_code, pallets
         )
         note = note or ''
+        if fallback_used and cost_eur is not None:
+            note = (f"ZIP was blank in source data — used {row.get('City')}'s known postal code "
+                     f"({zip_code}) to find this rate. {note}").strip()
 
     cost_usd = round(cost_eur * EUR_TO_USD, 2) if cost_eur is not None else None
     return {
@@ -285,6 +304,59 @@ def write_sheet(wb, title, out_rows, columns):
     return ws
 
 
+def add_backlog_effective_cost_column(backlog_ws, n_rows):
+    """Backlog's main Cost (USD) is DBS-based even for Battery rows — add a formula
+    column that swaps in the Battery country-average estimate where one exists, so
+    the Summary sheet can total "the cost you actually updated" rather than DBS."""
+    family_col = 'D'   # Family Type
+    cost_col = 'K'     # Cost (USD)
+    est_col = 'N'       # Battery Estimate (USD, country avg)
+    out_col_idx = len(BACKLOG_COLUMNS) + 1
+    header_cell = backlog_ws.cell(row=1, column=out_col_idx, value='Effective Cost (USD)')
+    header_cell.font = Font(name='Arial', bold=True)
+    for r in range(2, n_rows + 2):
+        formula = (f'=IF(AND(${family_col}{r}="Battery",${est_col}{r}<>""),'
+                   f'${est_col}{r},${cost_col}{r})')
+        cell = backlog_ws.cell(row=r, column=out_col_idx, value=formula)
+        cell.font = Font(name='Arial')
+    backlog_ws.column_dimensions[get_column_letter(out_col_idx)].width = 20
+    return get_column_letter(out_col_idx)
+
+
+def write_summary_sheet(wb, shipped_ws, backlog_ws, n_shipped, n_backlog, effective_col_letter):
+    ws = wb.create_sheet('Summary', 1)
+    bold = Font(name='Arial', bold=True)
+    arial = Font(name='Arial')
+
+    headers = ['Category', 'Total Lines', 'Priced Lines', 'Unpriced Lines', 'Total Cost (USD)']
+    ws.append(headers)
+    for c in range(1, len(headers) + 1):
+        ws.cell(row=1, column=c).font = bold
+
+    shipped_cost_range = f"'Shipped'!K2:K{n_shipped + 1}"
+    backlog_cost_range = f"'Backlog'!{effective_col_letter}2:{effective_col_letter}{n_backlog + 1}"
+
+    ws.append(['Shipped', n_shipped, f'=COUNT({shipped_cost_range})',
+                f'={n_shipped}-COUNT({shipped_cost_range})', f'=SUM({shipped_cost_range})'])
+    ws.append(['Backlog', n_backlog, f'=COUNT({backlog_cost_range})',
+                f'={n_backlog}-COUNT({backlog_cost_range})', f'=SUM({backlog_cost_range})'])
+    ws.append(['Total', '=B2+B3', '=C2+C3', '=D2+D3', '=E2+E3'])
+
+    for r in (2, 3, 4):
+        for c in range(1, len(headers) + 1):
+            ws.cell(row=r, column=c).font = bold if r == 4 else arial
+        ws.cell(row=r, column=5).number_format = '#,##0.00'
+
+    for c, h in enumerate(headers, start=1):
+        ws.column_dimensions[get_column_letter(c)].width = max(16, len(h) + 4)
+
+    note = ws.cell(row=6, column=1,
+                    value=('Battery lines: Total Cost (USD) uses the Q3 AUGUST-matched or country-average '
+                           'rate (whichever this workbook updated them to), not the original DBS cost.'))
+    note.font = arial
+    return ws
+
+
 def main():
     dbs_book = parse_dbs_price_book(DBS_FILE)
     q3_by_pl_nr, q3_country_avg = load_q3_battery_data()
@@ -298,10 +370,12 @@ def main():
 
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
-    write_sheet(wb, 'Shipped', shipped_out, COLUMNS)
-    write_sheet(wb, 'Backlog', backlog_out, BACKLOG_COLUMNS)
+    shipped_ws = write_sheet(wb, 'Shipped', shipped_out, COLUMNS)
+    backlog_ws = write_sheet(wb, 'Backlog', backlog_out, BACKLOG_COLUMNS)
+    effective_col_letter = add_backlog_effective_cost_column(backlog_ws, len(backlog_out))
 
     readme = wb.create_sheet('README', 0)
+    write_summary_sheet(wb, shipped_ws, backlog_ws, len(shipped_out), len(backlog_out), effective_col_letter)
     readme.column_dimensions['A'].width = 100
     bold = Font(name='Arial', bold=True)
     arial = Font(name='Arial')
@@ -327,6 +401,12 @@ def main():
         ('  Backlog: no shipment number to match yet, so three new columns give an ESTIMATE = the '
          'average Q3 AUGUST column A rate for that destination country (across all Q3 shipments to '
          'that country, any customer). Blank for non-Battery rows.', arial),
+        ('', arial),
+        ('"Summary" sheet totals Cost (USD) for Shipped and Backlog. Backlog totals use a new '
+         '"Effective Cost (USD)" column (added at the end of the Backlog sheet) that swaps in the '
+         'Battery country-average estimate where one exists, instead of the DBS-based Cost (USD) — '
+         'so Battery lines are counted at the updated MNT/Q3-based price, not the original DBS one.',
+         arial),
     ]
     for text, font in lines:
         readme.append((text,))
