@@ -41,12 +41,35 @@ OUT_FILE = os.path.join(BASE_DIR, "output", "NL_to_SUP_Cost.xlsx")
 
 NL_SUP_FILE = DATA("NL_to_SUP_Data.xlsx")
 DBS_FILE = DATA("DBS_Price_list_2026.xlsx")
+Q3_FILE = DATA("Q3_prices_AUGUST.xlsx")
 
 MAX_EP = 33
 EUR_TO_USD = 1.1618  # same snapshot used across this project (2026-09-01)
 
 BAYWA_IT_CUSTOMER = 'BayWa r.e. Solar Systems srl'
 BAYWA_IT_OVERRIDES = {1: 240, 2: 411, 12: 2100, 13: 1410}
+
+
+def load_q3_battery_data():
+    """PL nr. -> Solaredge rate EUR (col A), and country -> average Solaredge rate EUR."""
+    wb = openpyxl.load_workbook(Q3_FILE, data_only=True)
+    ws = wb['Sheet1']
+    headers = [c.value for c in ws[1]]
+    idx = {h: i for i, h in enumerate(headers)}
+    by_pl_nr = {}
+    by_country = {}
+    for r in ws.iter_rows(min_row=2, values_only=True):
+        rate = r[idx['Solaredge rate EUR']]
+        if not isinstance(rate, (int, float)):
+            continue
+        pl_nr = r[idx['PL nr.']]
+        if pl_nr:
+            by_pl_nr[pl_nr] = rate
+        country = r[idx['country']]
+        if country:
+            by_country.setdefault(country, []).append(rate)
+    country_avg = {c: round(sum(v) / len(v), 2) for c, v in by_country.items()}
+    return by_pl_nr, country_avg
 
 
 def parse_dbs_price_book(path):
@@ -158,6 +181,12 @@ COLUMNS = [
     ('Note', 'note'),
 ]
 
+BACKLOG_COLUMNS = COLUMNS + [
+    ('Battery Estimate (EUR, country avg)', 'est_cost_eur'),
+    ('Battery Estimate (USD, country avg)', 'est_cost_usd'),
+    ('Battery Estimate Note', 'est_note'),
+]
+
 
 def price_row(row, dbs_book):
     pallets = row.get('# of Pallets per line')
@@ -192,16 +221,50 @@ def price_row(row, dbs_book):
     }
 
 
-def write_sheet(wb, title, out_rows):
+def apply_battery_q3_override(shipped_out, q3_by_pl_nr):
+    """Shipped + Family Type=Battery: replace Cost with Q3 AUGUST col A, matched by
+    Shipment Number = PL nr. (col G). No match -> keep the DBS cost, flagged."""
+    for row in shipped_out:
+        if row['family_type'] != 'Battery':
+            continue
+        rate = q3_by_pl_nr.get(row['shipment_number'])
+        if rate is not None:
+            row['cost_eur'] = rate
+            row['cost_usd'] = round(rate * EUR_TO_USD, 2)
+            row['note'] = 'Battery — cost updated from Q3 AUGUST col A (Solaredge rate EUR), matched by Shipment Number.'
+        else:
+            prefix = 'Battery — no Q3 AUGUST shipment matched by Shipment Number; cost kept from DBS lookup.'
+            row['note'] = f"{prefix} {row['note']}".strip()
+
+
+def add_battery_country_estimate(backlog_out, q3_country_avg):
+    """Backlog + Family Type=Battery: add an estimated cost = average Q3 AUGUST col A
+    rate for that destination country (no per-shipment number to match yet)."""
+    for row in backlog_out:
+        row['est_cost_eur'] = None
+        row['est_cost_usd'] = None
+        row['est_note'] = ''
+        if row['family_type'] != 'Battery':
+            continue
+        avg = q3_country_avg.get(row['destination_country'])
+        if avg is not None:
+            row['est_cost_eur'] = avg
+            row['est_cost_usd'] = round(avg * EUR_TO_USD, 2)
+            row['est_note'] = f"Battery estimate: average Q3 AUGUST rate for {row['destination_country']}."
+        else:
+            row['est_note'] = f"Battery — no Q3 AUGUST shipments to {row['destination_country']} to average."
+
+
+def write_sheet(wb, title, out_rows, columns):
     ws = wb.create_sheet(title)
-    headers = [c[0] for c in COLUMNS]
+    headers = [c[0] for c in columns]
     ws.append(headers)
     bold = Font(name='Arial', bold=True)
     arial = Font(name='Arial')
     for c in range(1, len(headers) + 1):
         ws.cell(row=1, column=c).font = bold
     for row in out_rows:
-        ws.append([row[key] for _, key in COLUMNS])
+        ws.append([row[key] for _, key in columns])
     for r in range(2, ws.max_row + 1):
         for c in range(1, len(headers) + 1):
             ws.cell(row=r, column=c).font = arial
@@ -214,15 +277,19 @@ def write_sheet(wb, title, out_rows):
 
 def main():
     dbs_book = parse_dbs_price_book(DBS_FILE)
+    q3_by_pl_nr, q3_country_avg = load_q3_battery_data()
     rows = load_rows()
 
     shipped_out = [price_row(r, dbs_book) for r in rows if r.get('Source') == 'Shipped']
     backlog_out = [price_row(r, dbs_book) for r in rows if r.get('Source') == 'Backlog']
 
+    apply_battery_q3_override(shipped_out, q3_by_pl_nr)
+    add_battery_country_estimate(backlog_out, q3_country_avg)
+
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
-    write_sheet(wb, 'Shipped', shipped_out)
-    write_sheet(wb, 'Backlog', backlog_out)
+    write_sheet(wb, 'Shipped', shipped_out, COLUMNS)
+    write_sheet(wb, 'Backlog', backlog_out, BACKLOG_COLUMNS)
 
     readme = wb.create_sheet('README', 0)
     readme.column_dimensions['A'].width = 100
@@ -240,6 +307,13 @@ def main():
          'user-supplied EUR rates by pallet count established earlier, not the DBS lookup.', arial),
         ('"Dest WHS Code" is N/A for regular customer (SO) shipments — only warehouse-transfer '
          '(TO) lines have a real one. That is expected, not an error.', arial),
+        ('', arial),
+        ('Battery (Family Type) pricing, from data/Q3_prices_AUGUST.xlsx:', bold),
+        ('  Shipped: Cost is replaced by Q3 AUGUST column A (Solaredge rate EUR), matched by '
+         'Shipment Number = PL nr. (col G). No match -> DBS-based cost is kept, flagged in Note.', arial),
+        ('  Backlog: no shipment number to match yet, so three new columns give an ESTIMATE = the '
+         'average Q3 AUGUST column A rate for that destination country (across all Q3 shipments to '
+         'that country, any customer). Blank for non-Battery rows.', arial),
     ]
     for text, font in lines:
         readme.append((text,))
