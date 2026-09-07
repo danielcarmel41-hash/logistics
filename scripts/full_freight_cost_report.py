@@ -337,6 +337,23 @@ def parse_q3_august(path):
 # Main data
 # --------------------------------------------------------------------------
 
+# "# of Pallets per line roundup" on "NL - Support " still has 5 rows where the
+# source sheet's roundup formula returns pallets/32 (a container-ratio, e.g.
+# 1.03125 for 33 pallets) instead of an actual rounded-up pallet count -- a
+# data bug in the source file, confirmed against the sheet's own "# of Pallets
+# per line" column before that column was removed from this sheet. Since the
+# raw column is now gone there is nothing left to recompute from, so these 5
+# known lines (by Shipment Number + Line#) keep the correct EP already
+# verified from the prior file version.
+KNOWN_PALLET_FIXES = {
+    ('SH215202619101', '3'): 33,
+    ('SH215202619102', '1'): 33,
+    ('SH108202619427', '1'): 13,
+    ('SH215202619100', '2'): 33,
+    ('SH215202619020', '1'): 33,
+}
+
+
 def load_sheet_rows(sheet_name):
     """Loads a population sheet, dropping exact full-row duplicates (found 2 in
     "NL - Support " on the 0609 data pull — same order/line/shipment number and
@@ -347,6 +364,7 @@ def load_sheet_rows(sheet_name):
     rows = []
     seen = set()
     n_dupes = 0
+    n_fixed = 0
     for r in range(2, ws.max_row + 1):
         vals = [ws.cell(row=r, column=c).value for c in range(1, len(headers) + 1)]
         if all(v is None for v in vals):
@@ -356,14 +374,23 @@ def load_sheet_rows(sheet_name):
             n_dupes += 1
             continue
         seen.add(key)
-        rows.append(dict(zip(headers, vals)))
+        row = dict(zip(headers, vals))
+        fix_key = (row.get('Shipment Number'), str(row.get('Line#')))
+        if fix_key in KNOWN_PALLET_FIXES and 'Pallets per line roundup' in ' '.join(headers):
+            row['# of Pallets per line roundup'] = KNOWN_PALLET_FIXES[fix_key]
+            n_fixed += 1
+        rows.append(row)
     if n_dupes:
         print(f"  ({sheet_name}: dropped {n_dupes} exact-duplicate row(s))")
+    if n_fixed:
+        print(f"  ({sheet_name}: corrected {n_fixed} known-bad roundup value(s))")
     return rows
 
 
 def num_pallets(row):
-    v = row.get('# of Pallets per line')
+    v = row.get('# of Pallets per line roundup')
+    if not isinstance(v, (int, float)):
+        v = row.get('# of Pallets per line')
     return v if isinstance(v, (int, float)) else None
 
 
@@ -487,7 +514,7 @@ OUT_COLUMNS = [
     ('Destination country', lambda row, rec: row.get('Destination country')),
     ('ZIP', lambda row, rec: row.get('Zip')),
     ('Family Type', lambda row, rec: row.get('Family Type')),
-    ('# of Pallets per line', lambda row, rec: row.get('# of Pallets per line')),
+    ('# of Pallets per line (roundup)', lambda row, rec: num_pallets(row)),
     ('Method', lambda row, rec: rec['method']),
     ('Zone / Route', lambda row, rec: rec['route']),
     ('Cost', lambda row, rec: rec['cost']),
@@ -628,6 +655,13 @@ def main():
         ('', arial),
         ('2 exact full-row duplicate lines found in "NL - Support" (same order/shipment/every other field) '
          'were dropped before pricing, so they are not double-counted.', arial),
+        ('Pallet count uses "# of Pallets per line roundup" where the sheet has it (3PLs, NL - Support, '
+         'NL - EX + DO, NL - DG + UK), falling back to "# of Pallets per line" where it does not (Canot). '
+         '5 lines in "NL - Support" (Shipment Numbers SH215202619101/619102/619100/619020, SH108202619427) '
+         'still have a wrong roundup value in the source (pallets/32 instead of the rounded-up pallet '
+         'count) even after the requested fix; their EP is hardcoded from the correct value confirmed '
+         'against the sheet\'s own raw pallet column before that column was removed (KNOWN_PALLET_FIXES '
+         'in the script).', arial),
         ('"Summary" totals Cost (USD) per population, split Shipped/Backlog, via SUMIF formulas.', bold),
         ('Any line with a blank Cost has a Note explaining why (no matrix corridor, no DBS coverage, '
          'invalid ZIP/pallet count, etc.) — these need a human check.', arial),
