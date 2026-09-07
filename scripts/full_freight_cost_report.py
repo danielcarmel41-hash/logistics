@@ -338,15 +338,27 @@ def parse_q3_august(path):
 # --------------------------------------------------------------------------
 
 def load_sheet_rows(sheet_name):
+    """Loads a population sheet, dropping exact full-row duplicates (found 2 in
+    "NL - Support " on the 0609 data pull — same order/line/shipment number and
+    every other field identical, not distinct line items)."""
     wb = openpyxl.load_workbook(MAIN_FILE, data_only=True)
     ws = wb[sheet_name]
     headers = [c.value for c in ws[1]]
     rows = []
+    seen = set()
+    n_dupes = 0
     for r in range(2, ws.max_row + 1):
         vals = [ws.cell(row=r, column=c).value for c in range(1, len(headers) + 1)]
         if all(v is None for v in vals):
             continue
+        key = tuple(vals)
+        if key in seen:
+            n_dupes += 1
+            continue
+        seen.add(key)
         rows.append(dict(zip(headers, vals)))
+    if n_dupes:
+        print(f"  ({sheet_name}: dropped {n_dupes} exact-duplicate row(s))")
     return rows
 
 
@@ -614,6 +626,8 @@ def main():
         ('FX to USD: 1 EUR = 1.1618, 1 ILS = 0.3344 (2026-09-01 snapshot, xe.com/investing.com — not a '
          'contracted rate); Ship Cost Matrix figures are already USD.', arial),
         ('', arial),
+        ('2 exact full-row duplicate lines found in "NL - Support" (same order/shipment/every other field) '
+         'were dropped before pricing, so they are not double-counted.', arial),
         ('"Summary" totals Cost (USD) per population, split Shipped/Backlog, via SUMIF formulas.', bold),
         ('Any line with a blank Cost has a Note explaining why (no matrix corridor, no DBS coverage, '
          'invalid ZIP/pallet count, etc.) — these need a human check.', arial),
