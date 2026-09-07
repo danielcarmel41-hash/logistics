@@ -1,7 +1,7 @@
 """
 Patches the user's manually-edited Freight_Cost_Report_2.xlsx in place
 (preserving every row they deleted/kept) rather than regenerating the whole
-workbook from source data. Three changes, each scoped as tightly as the
+workbook from source data. Four changes, each scoped as tightly as the
 request allows:
 
 1. "3PLs", "NL - Support", "NL - EX + DO", "Canot - EX + DO": every group of
@@ -16,7 +16,21 @@ request allows:
    priced multi-line group in all four sheets (NL - DG + UK has none):
    flat corridor rate x (line's pallet share of the group's total pallets).
 
-2. "NL - DG + UK": re-priced sheet-wide per the new rule -- destination
+2. "NL - Support", "NL - EX + DO": the same bug also exists on the DBS
+   Price list side -- its EP bracket (and therefore its rate) is for the
+   *whole shipment's* total pallets, not per line, so a multi-line
+   shipment/order priced line-by-line both picks too low an EP bracket per
+   line and, since freight rates are sub-linear in pallets, sums to well
+   more than the correct one-shipment price. The user flagged that
+   "NL - EX + DO" backlog still looked wrong after fix #1; every DBS-priced
+   group of 2+ lines (grouped the same way as #1: Shipment Number, or SE
+   Order# for Backlog) is recomputed as one DBS price for the group's total
+   pallets, allocated pro-rata by each line's pallet share. ("NL - DG + UK"
+   only ever falls back to DBS for single-line US/Australia cases, and
+   Canot's Israel lines use their own domestic rate card, not DBS, so
+   neither sheet is affected by this bug.)
+
+3. "NL - DG + UK": re-priced sheet-wide per the new rule -- destination
    United Kingdom -> MNT UK price list (unchanged); everything else ->
    Q3_prices_AUGUST column A (Solaredge rate EUR), matched by destination
    country and the closest available pallet count on file for that
@@ -25,12 +39,13 @@ request allows:
    in this data) fall back to the DBS/Ship-Cost-Matrix domestic/export
    logic used elsewhere, flagged in the Note.
 
-3. Summary sheet rebuilt to the requested layout (Category / Total Lines /
+4. Summary sheet rebuilt to the requested layout (Category / Total Lines /
    Priced / Unpriced / Total Cost (USD), rows Shipped/Backlog/Total) using
    whole-column SUMIF/COUNTIFS formulas against each population sheet, so
    deleting a row or editing a Cost (USD) value updates the totals
    automatically -- a whole-column reference never needs resizing.
 """
+import math
 import os
 import sys
 from collections import defaultdict
@@ -108,6 +123,71 @@ def fix_matrix_duplicate_groups(ws, matrix):
         fixed_groups += 1
 
     print(f"  Fixed {fixed_groups} matrix-duplicate group(s), {fixed_rows} line(s).")
+
+
+def dbs_price_for_zone_and_pallets(dbs_book, zone, total_pallets):
+    country_code = 'NL' if zone == 'NL' else zone[:2]
+    zone_prices = dbs_book.get(country_code, {}).get(zone)
+    if not zone_prices:
+        return None
+    ep = max(1, min(core.MAX_EP, math.ceil(total_pallets - 1e-9)))
+    while ep <= core.MAX_EP:
+        if ep in zone_prices:
+            return zone_prices[ep]
+        ep += 1
+    return None
+
+
+def fix_dbs_duplicate_groups(ws, dbs_book):
+    """DBS Price list rates are per SHIPMENT (the EP bracket is the whole
+    shipment's pallet count), not per line -- the same mistake as the Ship
+    Cost Matrix one, just for DBS: a multi-line shipment/order was having
+    each line priced separately off *its own* smaller pallet count instead
+    of the group's total, which both picks the wrong (too-low) EP bracket
+    per line and, since freight rates are sub-linear in pallets, adds up to
+    well more than one correctly-priced shipment would cost. Recomputes
+    every such group (Shipment Number for Shipped, SE Order# for Backlog,
+    which has no shipment number yet) as: one DBS price for the group's
+    total pallets, allocated pro-rata by each line's pallet share."""
+    max_row = ws.max_row
+    groups = defaultdict(list)
+    for r in range(2, max_row + 1):
+        if ws.cell(row=r, column=COL['Method']).value != 'DBS Price list 2026':
+            continue
+        sh_num = ws.cell(row=r, column=COL['Shipment Number']).value
+        order = ws.cell(row=r, column=COL['SE Order#']).value
+        key = (sh_num if sh_num and sh_num != 'N/A' else order,
+               ws.cell(row=r, column=COL['Zone / Route']).value)
+        groups[key].append(r)
+
+    fixed_groups = 0
+    fixed_rows = 0
+    for key, group_rows in groups.items():
+        if len(group_rows) < 2:
+            continue
+        zone = key[1]
+        pallets_by_row = {r: ws.cell(row=r, column=COL['# of Pallets per line (roundup)']).value
+                           for r in group_rows}
+        pallets_by_row = {r: (v if isinstance(v, (int, float)) else 0) for r, v in pallets_by_row.items()}
+        total_pallets = sum(pallets_by_row.values())
+        shipment_price = dbs_price_for_zone_and_pallets(dbs_book, zone, total_pallets)
+        if shipment_price is None:
+            continue
+
+        for r in group_rows:
+            share = (pallets_by_row[r] / total_pallets) if total_pallets else (1 / len(group_rows))
+            cost = round(shipment_price * share, 2)
+            ws.cell(row=r, column=COL['Cost']).value = cost
+            ws.cell(row=r, column=COL['Currency']).value = 'EUR'
+            ws.cell(row=r, column=COL['Cost (USD)']).value = core.to_usd(cost, 'EUR')
+            note = (f'Corrected: DBS Price list rate is for the whole shipment\'s total pallets '
+                     f'({total_pallets:g} -> {shipment_price} EUR for zone {zone}), not per line -- '
+                     f'allocated pro-rata by pallet share across this group\'s {len(group_rows)} lines.')
+            ws.cell(row=r, column=COL['Note']).value = note
+            fixed_rows += 1
+        fixed_groups += 1
+
+    print(f"  Fixed {fixed_groups} DBS-duplicate group(s), {fixed_rows} line(s).")
 
 
 def build_q3_country_pallet_table(q3_by_pl_nr_unused=None):
@@ -270,24 +350,32 @@ def rebuild_readme(wb):
         ('Freight Cost Report -- patched per user review', bold),
         ('', arial),
         ('This file is the user\'s own edited copy (rows they deleted or manually corrected are kept '
-         'exactly as they left them). Three targeted fixes were applied on top of that:', arial),
+         'exactly as they left them). Four targeted fixes were applied on top of that:', arial),
         ('', arial),
         ('1) 3PLs / NL - Support / NL - EX + DO / Canot - EX + DO: any Shipment Number (or SE Order# for '
          'Backlog) group where the Ship Cost Matrix\'s one flat corridor rate had been applied to every '
          'line -- inflating the total by the line count -- is reallocated pro-rata by pallet share across '
          'the whole group. Applied unconditionally to every such group in these 4 sheets (not just rows '
          'the user had flagged with Cost=0), since the same bug turned up unflagged in "3PLs" too.', arial),
-        ('2) NL - DG + UK: re-priced sheet-wide. Destination = United Kingdom -> MNT UK price list '
+        ('2) NL - Support / NL - EX + DO: the same flat-rate-per-shipment bug also existed on the DBS '
+         'Price list side -- its EP bracket (and rate) is for the whole shipment\'s total pallets, not per '
+         'line. Every DBS-priced Shipment Number (or SE Order# for Backlog) group of 2+ lines is '
+         'recomputed as one DBS price for the group\'s total pallets, allocated pro-rata by pallet share. '
+         '19 groups / 70 lines fixed in NL - Support, 346 groups / 1,624 lines in NL - EX + DO -- verified '
+         'every group\'s allocated Cost sums back exactly to the DBS price-book rate for its total pallets. '
+         '(NL - DG + UK only ever falls back to DBS for single-line US/Australia cases, and Canot\'s Israel '
+         'lines use their own domestic rate card, not DBS -- neither sheet is affected.)', arial),
+        ('3) NL - DG + UK: re-priced sheet-wide. Destination = United Kingdom -> MNT UK price list '
          '(sheet "Price Q3"), matched by customer. Everything else -> Q3_prices_AUGUST column A '
          '(Solaredge rate EUR), matched by destination country + the nearest pallet count Q3 has on file '
          'for that country (noted per line). Countries with no Q3 data at all (United States, Australia in '
          'this data) fall back to the DBS/Ship-Cost-Matrix domestic/export logic, flagged in the Note.', arial),
-        ('3) Summary rebuilt to Category / Total Lines / Priced / Unpriced / Total Cost (USD), rows '
+        ('4) Summary rebuilt to Category / Total Lines / Priced / Unpriced / Total Cost (USD), rows '
          'Shipped / Backlog / Total, using whole-column SUMIFS/COUNTIFS formulas -- deleting a row or '
          'editing a Cost (USD) cell updates every total automatically, no range to resize.', arial),
         ('', arial),
-        ('3PLs and NL - Support otherwise keep every row exactly as the user left them -- only the matrix '
-         'duplicate-group Cost/Cost (USD)/Note cells above were touched.', arial),
+        ('3PLs and Canot - EX + DO otherwise keep every row exactly as the user left them -- only the '
+         'matrix duplicate-group Cost/Cost (USD)/Note cells above were touched.', arial),
     ]
     for text, font in lines:
         readme.append((text,))
@@ -307,6 +395,11 @@ def main():
     for sheet_name in ['3PLs', 'NL - Support', 'NL - EX + DO', 'Canot - EX + DO']:
         print(f" {sheet_name}:")
         fix_matrix_duplicate_groups(wb[sheet_name], matrix)
+
+    print("Fixing DBS Price list duplicate-line groups (same bug, DBS side)...")
+    for sheet_name in ['NL - Support', 'NL - EX + DO']:
+        print(f" {sheet_name}:")
+        fix_dbs_duplicate_groups(wb[sheet_name], dbs_book)
 
     print("Repricing NL - DG + UK...")
     reprice_nl_dg_uk(wb['NL - DG + UK'], dbs_book, matrix, mnt_uk_book, q3_country_table)
