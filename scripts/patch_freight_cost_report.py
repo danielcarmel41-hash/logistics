@@ -210,8 +210,41 @@ def rebuild_summary(wb, sheet_names):
             cell.font = bold if r == 4 else arial
             if c == 5:
                 cell.number_format = '#,##0.00'
+
+    # Second table: same columns, one row per population sheet (both
+    # Shipped and Backlog lines combined), so each sheet's contribution to
+    # the grand total above is visible on its own.
+    section_row = 6
+    ws.cell(row=section_row, column=1, value='By Population').font = bold
+    header_row = section_row + 1
     for c, h in enumerate(headers, start=1):
-        ws.column_dimensions[get_column_letter(c)].width = max(16, len(h) + 4)
+        ws.cell(row=header_row, column=c, value=h).font = bold
+
+    first_data_row = header_row + 1
+    for i, s in enumerate(sheet_names):
+        r = first_data_row + i
+        ws.cell(row=r, column=1, value=s)
+        ws.cell(row=r, column=2, value=f"=COUNTA('{s}'!$A$2:$A$100000)")
+        ws.cell(row=r, column=3, value=f"=COUNTIF('{s}'!$Q$2:$Q$100000,\"<>\")")
+        ws.cell(row=r, column=4, value=f"=B{r}-C{r}")
+        ws.cell(row=r, column=5, value=f"=SUM('{s}'!$Q:$Q)")
+        for c in range(1, len(headers) + 1):
+            ws.cell(row=r, column=c).font = arial
+            if c == 5:
+                ws.cell(row=r, column=c).number_format = '#,##0.00'
+
+    total_row = first_data_row + len(sheet_names)
+    ws.cell(row=total_row, column=1, value='Total').font = bold
+    for c, col_letter in zip(range(2, 6), ['B', 'C', 'D', 'E']):
+        first = get_column_letter(c) + str(first_data_row)
+        last = get_column_letter(c) + str(total_row - 1)
+        cell = ws.cell(row=total_row, column=c, value=f'=SUM({first}:{last})')
+        cell.font = bold
+        if c == 5:
+            cell.number_format = '#,##0.00'
+
+    for c, h in enumerate(headers, start=1):
+        ws.column_dimensions[get_column_letter(c)].width = max(20, len(h) + 4)
     return ws
 
 
