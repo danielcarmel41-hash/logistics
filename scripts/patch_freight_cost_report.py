@@ -190,6 +190,174 @@ def fix_dbs_duplicate_groups(ws, dbs_book):
     print(f"  Fixed {fixed_groups} DBS-duplicate group(s), {fixed_rows} line(s).")
 
 
+MISSING_EX_DO_SE_ORDERS = {'653362', '616321', '615359', '570289', '567969'}
+
+
+def restore_missing_ex_do_rows(ws, matrix):
+    """5 SE Orders (6 lines) exist in the source "NL - EX + DO" data (all DHL/
+    COURIER single-pallet shipments to Australia/India/Israel, Shipped) but
+    are entirely absent from the user's file -- not deleted as part of any
+    flagged duplicate-group, just missing outright, so every one of them was
+    unpriced anywhere in the report. Restored here from source and priced via
+    the same Ship Cost Matrix lookup (Sending WHS Code + ShipMode + destination
+    country) used elsewhere for non-EUROPE lines on this sheet."""
+    src_wb = openpyxl.load_workbook(
+        os.path.join(BASE_DIR, 'data', 'Freight_costs_Data_0609.xlsx'), data_only=True)
+    src_ws = src_wb['NL - EX + DO']
+    headers = [c.value for c in src_ws[1]]
+    idx = {h: i for i, h in enumerate(headers)}
+
+    existing_keys = set()
+    for r in range(2, ws.max_row + 1):
+        sh = ws.cell(row=r, column=COL['Shipment Number']).value
+        if sh and sh != 'N/A':
+            existing_keys.add(sh)
+
+    added = 0
+    for row in src_ws.iter_rows(min_row=2, values_only=True):
+        if all(v is None for v in row):
+            continue
+        order = str(row[idx['SE Order#']])
+        if order not in MISSING_EX_DO_SE_ORDERS:
+            continue
+        shipment_number = row[idx['Shipment Number']]
+        if shipment_number in existing_keys:
+            continue  # already present under this shipment number -- don't double-add
+        org = row[idx['Sending WHS Code']]
+        ship_mode = row[idx['ShipMode']]
+        dest = row[idx['Destination country']]
+        pallets = row[idx['# of Pallets per line roundup']]
+        hit = core.matrix_lookup(matrix, org, row[idx['Origin country']], ship_mode, dest)
+        route = f"{org}/{ship_mode}->{dest}"
+        if hit:
+            cost, currency, no_pal, note = hit
+        else:
+            cost, currency, note = None, None, f'No Ship Cost Matrix rate for {route} — confirm with WH contact.'
+        note = ('Restored: this line exists in the source data but was missing from the '
+                'reviewed file entirely (not a flagged duplicate) -- priced via Ship Cost Matrix. '
+                + note).strip()
+        new_row = [None] * len(COLS)
+        new_row[COL['Source'] - 1] = row[idx['Source']]
+        new_row[COL['Shipment Number'] - 1] = shipment_number if shipment_number else 'N/A'
+        new_row[COL['SE Order#'] - 1] = order
+        new_row[COL['Sending WHS Code'] - 1] = org
+        new_row[COL['Dest WHS Code'] - 1] = row[idx['Dest WHS Code']]
+        new_row[COL['Forwarder'] - 1] = row[idx['Forwarder']]
+        new_row[COL['ShipMode'] - 1] = ship_mode
+        new_row[COL['Customer Name'] - 1] = row[idx['Customer Name']]
+        new_row[COL['Destination country'] - 1] = dest
+        new_row[COL['ZIP'] - 1] = row[idx['Zip']]
+        new_row[COL['Family Type'] - 1] = row[idx['Family Type']]
+        new_row[COL['# of Pallets per line (roundup)'] - 1] = pallets
+        new_row[COL['Method'] - 1] = 'Ship Cost Matrix'
+        new_row[COL['Zone / Route'] - 1] = route
+        new_row[COL['Cost'] - 1] = cost
+        new_row[COL['Currency'] - 1] = currency
+        new_row[COL['Cost (USD)'] - 1] = core.to_usd(cost, currency)
+        new_row[COL['Note'] - 1] = note
+        ws.append(new_row)
+        for c in range(1, len(COLS) + 1):
+            ws.cell(row=ws.max_row, column=c).font = Font(name='Arial')
+        added += 1
+    print(f"  Restored {added} missing line(s).")
+
+
+DG_UK_COLLAPSED_ORDERS = {'579271': 'SH21526977882', '579228': 'SH21526977881'}
+
+
+def restore_and_fix_dg_uk_duplicates(ws, matrix):
+    """2 SE Orders in "NL - DG + UK" (579271, 579228) are each a 20-pallet
+    shipment split into 20 distinct 1-pallet lines in the source data (same
+    part number, different Line#) -- not exact duplicates. 19 of the 20 lines
+    for each were removed from the user's file (they look identical without
+    the Line# column), leaving 1 line silently carrying the *entire*
+    Ship Cost Matrix corridor rate for the whole 20-pallet shipment instead of
+    its own 1-pallet share. Restores the missing 19 lines each from source and
+    reallocates the flat corridor rate pro-rata across all 20 -- this changes
+    nothing about the shipment's total cost (still one flat rate), only fixes
+    which lines carry it."""
+    src_wb = openpyxl.load_workbook(
+        os.path.join(BASE_DIR, 'data', 'Freight_costs_Data_0609.xlsx'), data_only=True)
+    src_ws = src_wb['NL - DG + UK']
+    headers = [c.value for c in src_ws[1]]
+    idx = {h: i for i, h in enumerate(headers)}
+
+    src_rows_by_order = defaultdict(list)
+    for row in src_ws.iter_rows(min_row=2, values_only=True):
+        if all(v is None for v in row):
+            continue
+        order = str(row[idx['SE Order#']])
+        if order in DG_UK_COLLAPSED_ORDERS:
+            src_rows_by_order[order].append(row)
+
+    added = 0
+    fixed_groups = 0
+    for order, shipment_number in DG_UK_COLLAPSED_ORDERS.items():
+        src_rows = src_rows_by_order[order]
+        # find the one surviving row in ws for this shipment
+        existing_row_idx = None
+        for r in range(2, ws.max_row + 1):
+            if ws.cell(row=r, column=COL['Shipment Number']).value == shipment_number:
+                existing_row_idx = r
+                break
+        if existing_row_idx is None:
+            continue
+
+        sample = src_rows[0]
+        org = sample[idx['Sending WHS Code']]
+        ship_mode = sample[idx['ShipMode']]
+        dest = sample[idx['Destination country']]
+        hit = core.matrix_lookup(matrix, org, sample[idx['Origin country']], ship_mode, dest)
+        if not hit:
+            continue
+        flat_cost, currency, no_pal, _ = hit
+
+        # restore the missing lines (all but 1, since 1 already survives)
+        group_rows = [existing_row_idx]
+        for row in src_rows[1:]:
+            new_row = [None] * len(COLS)
+            new_row[COL['Source'] - 1] = row[idx['Source']]
+            new_row[COL['Shipment Number'] - 1] = shipment_number
+            new_row[COL['SE Order#'] - 1] = order
+            new_row[COL['Sending WHS Code'] - 1] = org
+            new_row[COL['Dest WHS Code'] - 1] = row[idx['Dest WHS Code']]
+            new_row[COL['Forwarder'] - 1] = row[idx['Forwarder']]
+            new_row[COL['ShipMode'] - 1] = ship_mode
+            new_row[COL['Customer Name'] - 1] = row[idx['Customer Name']]
+            new_row[COL['Destination country'] - 1] = dest
+            new_row[COL['ZIP'] - 1] = row[idx['Zip']]
+            new_row[COL['Family Type'] - 1] = row[idx['Family Type']]
+            new_row[COL['# of Pallets per line (roundup)'] - 1] = row[idx['# of Pallets per line roundup']]
+            new_row[COL['Method'] - 1] = 'Ship Cost Matrix'
+            new_row[COL['Zone / Route'] - 1] = f"{org}/{ship_mode}->{dest}"
+            ws.append(new_row)
+            group_rows.append(ws.max_row)
+            added += 1
+
+        route = f"{org}/{ship_mode}->{dest}"
+        pallets_by_row = {r: (ws.cell(row=r, column=COL['# of Pallets per line (roundup)']).value or 0)
+                           for r in group_rows}
+        total_pallets = sum(pallets_by_row.values())
+        for r in group_rows:
+            ws.cell(row=r, column=COL['Method']).value = 'Ship Cost Matrix'
+            ws.cell(row=r, column=COL['Zone / Route']).value = route
+            share = (pallets_by_row[r] / total_pallets) if total_pallets else (1 / len(group_rows))
+            cost = round(flat_cost * share, 2)
+            ws.cell(row=r, column=COL['Cost']).value = cost
+            ws.cell(row=r, column=COL['Currency']).value = currency
+            ws.cell(row=r, column=COL['Cost (USD)']).value = core.to_usd(cost, currency)
+            note = (f'Restored: 19 of this shipment\'s 20 one-pallet lines were missing from the reviewed '
+                     f'file (removed as apparent duplicates -- they differ only by Line# in the source data, '
+                     f'not shown here). Ship Cost Matrix gives one flat rate ({flat_cost} {currency}) for the '
+                     f'whole 20-pallet shipment, not per line -- allocated pro-rata by pallet share across '
+                     f'all {len(group_rows)} lines; the shipment\'s total cost is unchanged.')
+            ws.cell(row=r, column=COL['Note']).value = note
+            for c in range(1, len(COLS) + 1):
+                ws.cell(row=r, column=c).font = Font(name='Arial')
+        fixed_groups += 1
+    print(f"  Restored {added} missing line(s) across {fixed_groups} shipment(s).")
+
+
 def build_q3_country_pallet_table(q3_by_pl_nr_unused=None):
     wb = openpyxl.load_workbook(core.Q3_AUG_FILE, data_only=True)
     ws = wb['Sheet1']
@@ -350,7 +518,7 @@ def rebuild_readme(wb):
         ('Freight Cost Report -- patched per user review', bold),
         ('', arial),
         ('This file is the user\'s own edited copy (rows they deleted or manually corrected are kept '
-         'exactly as they left them). Four targeted fixes were applied on top of that:', arial),
+         'exactly as they left them). Six targeted fixes were applied on top of that:', arial),
         ('', arial),
         ('1) 3PLs / NL - Support / NL - EX + DO / Canot - EX + DO: any Shipment Number (or SE Order# for '
          'Backlog) group where the Ship Cost Matrix\'s one flat corridor rate had been applied to every '
@@ -370,7 +538,18 @@ def rebuild_readme(wb):
          '(Solaredge rate EUR), matched by destination country + the nearest pallet count Q3 has on file '
          'for that country (noted per line). Countries with no Q3 data at all (United States, Australia in '
          'this data) fall back to the DBS/Ship-Cost-Matrix domestic/export logic, flagged in the Note.', arial),
-        ('4) Summary rebuilt to Category / Total Lines / Priced / Unpriced / Total Cost (USD), rows '
+        ('4) NL - EX + DO: 5 SE Orders (6 lines) -- 653362, 616321 (x2), 615359, 570289, 567969, all DHL/'
+         'COURIER single-pallet Shipped lines to Australia/India/Israel -- exist in the source data but were '
+         'missing from the reviewed file entirely (not part of any flagged duplicate group), so they were '
+         'unpriced anywhere in the report. Restored from source and priced via Ship Cost Matrix (COURIER '
+         'rates exist on file for all 3 destinations).', arial),
+        ('5) NL - DG + UK: SE Orders 579271 and 579228 are each a 20-pallet US shipment split into 20 '
+         'distinct 1-pallet lines in the source data (same part number, different Line#); 19 of the 20 lines '
+         'for each were removed from the reviewed file (they look identical without a Line# column, but are '
+         'not exact duplicates). Restored all 19+19 missing lines and reallocated the Ship Cost Matrix flat '
+         'corridor rate pro-rata across all 20 lines per shipment -- the shipment\'s total cost is unchanged, '
+         'only which lines carry it.', arial),
+        ('6) Summary rebuilt to Category / Total Lines / Priced / Unpriced / Total Cost (USD), rows '
          'Shipped / Backlog / Total, using whole-column SUMIFS/COUNTIFS formulas -- deleting a row or '
          'editing a Cost (USD) cell updates every total automatically, no range to resize.', arial),
         ('', arial),
@@ -391,6 +570,9 @@ def main():
 
     wb = openpyxl.load_workbook(IN_FILE)
 
+    print("Restoring lines missing outright from NL - EX + DO...")
+    restore_missing_ex_do_rows(wb['NL - EX + DO'], matrix)
+
     print("Fixing Ship Cost Matrix duplicate-line groups...")
     for sheet_name in ['3PLs', 'NL - Support', 'NL - EX + DO', 'Canot - EX + DO']:
         print(f" {sheet_name}:")
@@ -403,6 +585,9 @@ def main():
 
     print("Repricing NL - DG + UK...")
     reprice_nl_dg_uk(wb['NL - DG + UK'], dbs_book, matrix, mnt_uk_book, q3_country_table)
+
+    print("Restoring collapsed-duplicate lines in NL - DG + UK...")
+    restore_and_fix_dg_uk_duplicates(wb['NL - DG + UK'], matrix)
 
     population_sheets = ['3PLs', 'NL - Support', 'NL - EX + DO', 'NL - DG + UK', 'Canot - EX + DO']
     print("Rebuilding Summary...")
