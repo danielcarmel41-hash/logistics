@@ -4,16 +4,17 @@ Patches the user's manually-edited Freight_Cost_Report_2.xlsx in place
 workbook from source data. Three changes, each scoped as tightly as the
 request allows:
 
-1. "NL - EX + DO" and "Canot - EX + DO": every group of lines sharing one
-   Shipment Number (or SE Order# for Backlog lines, which have no shipment
-   number yet) that the user flagged with Cost = 0 was getting the Ship
-   Cost Matrix's flat per-shipment/corridor rate applied to *every line*
-   instead of once per shipment -- e.g. one Israel shipment with 19 lines
-   was costed at 4800 USD x 19. Recomputes the whole group (all its lines,
-   including any the user had NOT zeroed, since leaving that one line at
-   the full flat rate while zeroing its siblings would make the group's
-   total wrong) as: flat corridor rate x (line's pallet share of the
-   group's total pallets). Groups with no flagged line are left untouched.
+1. "3PLs", "NL - Support", "NL - EX + DO", "Canot - EX + DO": every group of
+   lines sharing one Shipment Number (or SE Order# for Backlog lines, which
+   have no shipment number yet) was getting the Ship Cost Matrix's flat
+   per-shipment/corridor rate applied to *every line* instead of once per
+   shipment -- e.g. one Israel shipment with 19 lines was costed at 4800
+   USD x 19. This was first found (and fixed) only in the specific rows the
+   user flagged with Cost=0 in "NL - EX + DO"/"Canot - EX + DO"; the user
+   then spotted the same bug unflagged in "3PLs" by checking against the
+   source data, so the fix now applies unconditionally to every matrix-
+   priced multi-line group in all four sheets (NL - DG + UK has none):
+   flat corridor rate x (line's pallet share of the group's total pallets).
 
 2. "NL - DG + UK": re-priced sheet-wide per the new rule -- destination
    United Kingdom -> MNT UK price list (unchanged); everything else ->
@@ -54,8 +55,13 @@ COL = {name: i + 1 for i, name in enumerate(COLS)}  # 1-indexed columns, fixed l
 
 def fix_matrix_duplicate_groups(ws, matrix):
     """Ship Cost Matrix flat-rate lines wrongly applied per-line: reallocate
-    by pallet share within each shipment/order group that has a flagged (0)
-    line."""
+    by pallet share within every shipment/order group with more than one
+    line, whether or not the user flagged it. (Originally this only touched
+    groups containing a Cost=0 flagged line; that missed groups the user
+    hadn't spotted yet, e.g. all of "3PLs" and a few more in the other
+    sheets, since none of their rows happened to be flagged -- fixed here to
+    just check the group unconditionally. Idempotent: an already-corrected
+    group recomputes to the same split.)"""
     max_row = ws.max_row
     groups = defaultdict(list)
     for r in range(2, max_row + 1):
@@ -71,8 +77,7 @@ def fix_matrix_duplicate_groups(ws, matrix):
     fixed_groups = 0
     fixed_rows = 0
     for key, group_rows in groups.items():
-        has_zero = any(ws.cell(row=r, column=COL['Cost']).value == 0 for r in group_rows)
-        if not has_zero or len(group_rows) < 2:
+        if len(group_rows) < 2:
             continue
 
         sample_row = group_rows[0]
@@ -267,11 +272,11 @@ def rebuild_readme(wb):
         ('This file is the user\'s own edited copy (rows they deleted or manually corrected are kept '
          'exactly as they left them). Three targeted fixes were applied on top of that:', arial),
         ('', arial),
-        ('1) NL - EX + DO / Canot - EX + DO: any Shipment Number (or SE Order# for Backlog) group where '
-         'the Ship Cost Matrix\'s one flat corridor rate had been applied to every line -- inflating the '
-         'total by the line count -- and that the user flagged with Cost = 0, was reallocated pro-rata by '
-         'pallet share across the whole group (including a line the user had not zeroed, where leaving it '
-         'at the full flat rate would have made the group\'s total wrong).', arial),
+        ('1) 3PLs / NL - Support / NL - EX + DO / Canot - EX + DO: any Shipment Number (or SE Order# for '
+         'Backlog) group where the Ship Cost Matrix\'s one flat corridor rate had been applied to every '
+         'line -- inflating the total by the line count -- is reallocated pro-rata by pallet share across '
+         'the whole group. Applied unconditionally to every such group in these 4 sheets (not just rows '
+         'the user had flagged with Cost=0), since the same bug turned up unflagged in "3PLs" too.', arial),
         ('2) NL - DG + UK: re-priced sheet-wide. Destination = United Kingdom -> MNT UK price list '
          '(sheet "Price Q3"), matched by customer. Everything else -> Q3_prices_AUGUST column A '
          '(Solaredge rate EUR), matched by destination country + the nearest pallet count Q3 has on file '
@@ -281,7 +286,8 @@ def rebuild_readme(wb):
          'Shipped / Backlog / Total, using whole-column SUMIFS/COUNTIFS formulas -- deleting a row or '
          'editing a Cost (USD) cell updates every total automatically, no range to resize.', arial),
         ('', arial),
-        ('3PLs and NL - Support were left untouched (no flagged rows, no rule change requested for them).', arial),
+        ('3PLs and NL - Support otherwise keep every row exactly as the user left them -- only the matrix '
+         'duplicate-group Cost/Cost (USD)/Note cells above were touched.', arial),
     ]
     for text, font in lines:
         readme.append((text,))
@@ -298,7 +304,7 @@ def main():
     wb = openpyxl.load_workbook(IN_FILE)
 
     print("Fixing Ship Cost Matrix duplicate-line groups...")
-    for sheet_name in ['NL - EX + DO', 'Canot - EX + DO']:
+    for sheet_name in ['3PLs', 'NL - Support', 'NL - EX + DO', 'Canot - EX + DO']:
         print(f" {sheet_name}:")
         fix_matrix_duplicate_groups(wb[sheet_name], matrix)
 
