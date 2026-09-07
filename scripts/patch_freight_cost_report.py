@@ -190,6 +190,54 @@ def fix_dbs_duplicate_groups(ws, dbs_book):
     print(f"  Fixed {fixed_groups} DBS-duplicate group(s), {fixed_rows} line(s).")
 
 
+EX_DO_PALLET_KEY_FIELDS_SRC = ['SE Order#', 'Shipment Number', 'Sending WHS Code', 'Dest WHS Code',
+                               'Forwarder', 'ShipMode', 'Customer Name', 'Destination country',
+                               'Zip', 'Family Type']
+
+
+def sync_ex_do_pallets_from_source(ws):
+    """271 lines in the source "NL - EX + DO" data had '# of Pallets per line
+    roundup' = 0 (not yet filled in) when the report was first generated --
+    that 0 was floored up to EP=1 for any *standalone* DBS/matrix lookup, but
+    fed straight into the flat-corridor-rate pro-rata split as a 0 pallet
+    share for any line that was part of a multi-line shipment/order group,
+    silently giving those lines $0 of a shipment they were actually part of.
+    The user has since filled in the real (fractional-pallet) values in the
+    source file; this re-syncs '# of Pallets per line (roundup)' in the
+    reviewed file to match, by the row's other identifying fields (Shipment
+    Number, customer, destination, ZIP, family type -- everything but the
+    Line# this file doesn't carry), before any of the group-share fixes below
+    recompute allocations from these pallet counts."""
+    src_wb = openpyxl.load_workbook(
+        os.path.join(BASE_DIR, 'data', 'Freight_costs_Data_0609.xlsx'), data_only=True)
+    src_ws = src_wb['NL - EX + DO']
+    headers = [c.value for c in src_ws[1]]
+    idx = {h: i for i, h in enumerate(headers)}
+
+    queues = defaultdict(list)
+    for row in src_ws.iter_rows(min_row=2, values_only=True):
+        if all(v is None for v in row):
+            continue
+        key = tuple(row[idx[f]] for f in EX_DO_PALLET_KEY_FIELDS_SRC)
+        queues[key].append(row[idx['# of Pallets per line roundup']])
+
+    ex_do_key_cols = ['SE Order#', 'Shipment Number', 'Sending WHS Code', 'Dest WHS Code',
+                       'Forwarder', 'ShipMode', 'Customer Name', 'Destination country',
+                       'ZIP', 'Family Type']
+    updated = 0
+    for r in range(2, ws.max_row + 1):
+        key = tuple(ws.cell(row=r, column=COL[c]).value for c in ex_do_key_cols)
+        q = queues.get(key)
+        if not q:
+            continue
+        new_pallets = q.pop(0)
+        old_pallets = ws.cell(row=r, column=COL['# of Pallets per line (roundup)']).value
+        if new_pallets != old_pallets:
+            ws.cell(row=r, column=COL['# of Pallets per line (roundup)']).value = new_pallets
+            updated += 1
+    print(f"  Synced {updated} pallet value(s) from the corrected source data.")
+
+
 MISSING_EX_DO_SE_ORDERS = {'653362', '616321', '615359', '570289', '567969'}
 
 
@@ -518,7 +566,7 @@ def rebuild_readme(wb):
         ('Freight Cost Report -- patched per user review', bold),
         ('', arial),
         ('This file is the user\'s own edited copy (rows they deleted or manually corrected are kept '
-         'exactly as they left them). Six targeted fixes were applied on top of that:', arial),
+         'exactly as they left them). Seven targeted fixes were applied on top of that:', arial),
         ('', arial),
         ('1) 3PLs / NL - Support / NL - EX + DO / Canot - EX + DO: any Shipment Number (or SE Order# for '
          'Backlog) group where the Ship Cost Matrix\'s one flat corridor rate had been applied to every '
@@ -549,7 +597,14 @@ def rebuild_readme(wb):
          'not exact duplicates). Restored all 19+19 missing lines and reallocated the Ship Cost Matrix flat '
          'corridor rate pro-rata across all 20 lines per shipment -- the shipment\'s total cost is unchanged, '
          'only which lines carry it.', arial),
-        ('6) Summary rebuilt to Category / Total Lines / Priced / Unpriced / Total Cost (USD), rows '
+        ('6) NL - EX + DO: 271 lines had "# of Pallets per line roundup" = 0 in the source data (not yet '
+         'filled in) when this report was first generated; the user has since supplied the real (fractional) '
+         'pallet values. Re-synced from the corrected source data by matching each line\'s other identifying '
+         'fields (Shipment Number, customer, destination, ZIP, family type), then re-ran the matrix/DBS '
+         'group-share fixes above so every affected shipment\'s flat rate is re-split by the corrected pallet '
+         'shares -- lines with 0 pallets were previously drawing $0 (or an even, unweighted split) of a '
+         'shipment they were genuinely part of.', arial),
+        ('7) Summary rebuilt to Category / Total Lines / Priced / Unpriced / Total Cost (USD), rows '
          'Shipped / Backlog / Total, using whole-column SUMIFS/COUNTIFS formulas -- deleting a row or '
          'editing a Cost (USD) cell updates every total automatically, no range to resize.', arial),
         ('', arial),
@@ -569,6 +624,9 @@ def main():
     q3_country_table = build_q3_country_pallet_table()
 
     wb = openpyxl.load_workbook(IN_FILE)
+
+    print("Syncing NL - EX + DO pallet values from corrected source data...")
+    sync_ex_do_pallets_from_source(wb['NL - EX + DO'])
 
     print("Restoring lines missing outright from NL - EX + DO...")
     restore_missing_ex_do_rows(wb['NL - EX + DO'], matrix)
