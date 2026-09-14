@@ -264,8 +264,10 @@ footer b{color:var(--text-dim);}
 <script>
 (function(){
   var raw = JSON.parse(document.getElementById('report-data').textContent);
-  var fmt = new Intl.NumberFormat('en-US', {maximumFractionDigits:0});
-  var fmt2 = new Intl.NumberFormat('en-US', {maximumFractionDigits:2});
+  var fmtNum = new Intl.NumberFormat('en-US', {maximumFractionDigits:0});
+  var fmt2Num = new Intl.NumberFormat('en-US', {maximumFractionDigits:2});
+  function fmt(n){ return fmtNum.format(n); }
+  function fmt2(n){ return fmt2Num.format(n); }
 
   var state = {sendingWhs:'all', destWhs:'all', destCountry:'all', family:'all', population:'all', status:'all'};
 
