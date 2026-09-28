@@ -16,28 +16,47 @@ Populations and routing rules (as given), checked in this order:
 
   Sending WHS Code in {3PLDBSNL, 3PLDBSBRNL} (Netherlands):
     1. Family Type = Battery, OR Destination country = United Kingdom
-                                        -> priced ONLY from Q3 prices
-       AUGUST (Solaredge rate EUR, column A, matched by Shipment Number
-       when there is a real Logistic POD) or MNT UK price list (sheet
+                                        -> priced from Q3 prices AUGUST
+       (Solaredge rate EUR, column A, matched by Shipment Number when
+       there is a real Logistic POD) or MNT UK price list (sheet
        "Price Q3", matched by Customer Name/ZIP) -- no DBS/matrix
-       fallback (same strict rule as the last BI 1409 fix). Unmatched
-       lines are flagged, not silently priced another way.
-    2. Dest WHS Code ends "SUP" (support warehouse)
-                                        -> same forwarder-based rule as
-       #3 below ("as done before").
+       fallback (same strict *sourcing* rule as the last BI 1409 fix).
+       If neither matches exactly, the group is given a relaxed
+       ESTIMATE from Q3 AUGUST instead of being left blank: the nearest
+       available pallet count on file for the same destination country,
+       preferring a sample from the same customer name when more than
+       one is on file (flagged "Estimated ..." in the Note). Only left
+       fully unpriced if no Q3 AUGUST sample exists at all for that
+       country.
+    2. Dest WHS Code ends "SUP" (support warehouse):
+         - ShipMode = SEA              -> Ship Cost Matrix, by Sending
+           WHS Code/origin country + destination country (same as the
+           export rule below, just checked before the forwarder split).
+         - Otherwise, same forwarder-based rule as #3 below.
     3. Everything else, split by Forwarder:
-         - DBSCHENKER                  -> DBS Price list 2026, by
+         - DBSCHENKER, or a blank/"DEFAULT" forwarder (no real forwarder
+           on file -- treated as DBS by default, per review)
+                                        -> DBS Price list 2026, by
            destination zone (country code + first 2 digits of ZIP, or
-           GB postcode area) + total pallets.
+           GB postcode area) + total pallets. If the ZIP can't be
+           resolved to a zone, or that zone has no bracket for this many
+           pallets, falls back to a relaxed ESTIMATE: the DBS rate
+           averaged across every zone on file for that country at the
+           same pallet count, ignoring ZIP (flagged "Estimated ..." in
+           the Note).
          - MNT                          -> Q3 prices AUGUST (Solaredge
            rate EUR), matched by Shipment Number when there is a real
-           Logistic POD; no match -> flagged, not priced via DBS.
-         - Any other forwarder          -> NOT priced here -- collected
+           Logistic POD; no match -> same relaxed Q3 AUGUST
+           country/customer/pallet estimate as rule #1 above.
+         - Any other, genuinely different forwarder (DGF, Q4, DSV, ...)
+                                        -> NOT priced here -- collected
            in the "Manual Review" sheet for the user to price by hand,
            per the request.
        BayWa r.e. Solar Systems srl (Italy) lines whose ZIP is garbage
        text ("3c/4c block") use the fixed EUR-by-pallet override table
-       instead of DBS, regardless of forwarder.
+       instead of DBS, regardless of forwarder, and are classified as
+       "NL - Domestic" (their own former "NL - BayWa IT (manual)"
+       population was retired once this table gave them real prices).
     4. ShipMode = SEA                  -> Ship Cost Matrix (export),
        instead of the forwarder split above.
 
@@ -93,6 +112,17 @@ NL_WHS = {'3PLDBSNL', '3PLDBSBRNL'}
 CANOT_WHS = '3PLCANOT'
 DBSCHENKER_FORWARDERS = {'DBSCHENKER'}
 MNT_FORWARDERS = {'MNT'}
+# 'DEFAULT' (or a blank value) means the source data has no real forwarder on
+# file for that line -- per the user's explicit review, these are "most likely
+# operated by DBS" (confirmed against several named examples: MARCHIOL S.P.A,
+# Ecostal Yomatec, Shipment Number SH10826976919), so they are treated the
+# same as an explicit DBSCHENKER forwarder rather than sent to Manual Review.
+# A genuinely different, named forwarder (DGF, Q4, DSV, ...) is NOT covered by
+# this and is still left for manual pricing.
+
+
+def is_default_forwarder(forwarder):
+    return not forwarder or forwarder == 'DEFAULT'
 
 BAYWA_IT_CUSTOMER = 'BayWa r.e. Solar Systems srl'
 BAYWA_IT_KNOWN_RATES = {1: 240, 2: 411, 12: 2100, 13: 1410}
@@ -204,6 +234,48 @@ def dbs_lookup(dbs_book, country_code, zip_code, total_pallets):
     if price is None:
         return zone, None, f'Zone {zone} has no rate bracket for {total_pallets:g} pallets.'
     return zone, price, None
+
+
+def dbs_country_estimate(dbs_book, country_code, total_pallets):
+    """Relaxed fallback when the exact ZIP->zone lookup fails (bad/missing
+    ZIP, or that zone has no bracket for this pallet count): average the
+    price across every zone on file for the destination country at the
+    same (rounded-up) pallet count, ignoring ZIP entirely, per the user's
+    explicit request ("take an estimate by pallet quantity for the same
+    country, even if there is no similar ZIP")."""
+    country_code = (country_code or '').strip().upper()
+    zones = dbs_book.get(country_code)
+    if not zones:
+        return None, f'No DBS rate sheet at all for country {country_code!r} -- cannot estimate.'
+    candidates = [p for p in (dbs_price_for_pallets(zp, total_pallets) for zp in zones.values())
+                  if p is not None]
+    if not candidates:
+        return None, (f'No DBS zone in country {country_code!r} has a rate bracket for '
+                       f'{total_pallets:g} pallets -- cannot estimate.')
+    avg = round(sum(candidates) / len(candidates), 2)
+    note = (f'Estimated DBS rate {avg} EUR for {total_pallets:g} total pallets -- exact ZIP zone unavailable '
+            f'or unmatched, averaged across {len(candidates)} zone(s) on file for {country_code} at this '
+            f'pallet count (country + pallet-quantity estimate, confirm with WH).')
+    return avg, note
+
+
+def q3_country_estimate(q3_samples, country, customer, total_pallets):
+    """Relaxed fallback for MNT/Q3-priced groups with no exact Shipment
+    Number/POD match: pick the nearest-pallet-count Q3 AUGUST rate on file
+    for the same destination country (preferring the same customer when
+    more than one is on file), per the user's explicit request to estimate
+    by "pallet quantity, destination country and customer name"."""
+    samples = q3_samples.get(country)
+    if not samples:
+        return None, f'No other Q3 AUGUST-priced shipment on file for destination country {country!r} -- cannot estimate.'
+    same_cust = [s for s in samples if s[0] == customer]
+    pool = same_cust if same_cust else samples
+    best_customer, best_pallets, best_rate = min(pool, key=lambda s: abs(s[1] - total_pallets))
+    cust_note = f'same customer {customer!r}' if same_cust else 'no other shipment for this customer on file'
+    note = (f'Estimated Q3 AUGUST rate {best_rate} EUR for {total_pallets:g} total pallets -- nearest available '
+            f'pallet count ({best_pallets:g}) on file for destination country {country!r} ({cust_note}); no '
+            f'exact Shipment Number/POD match this round, confirm with WH.')
+    return best_rate, note
 
 
 def parse_ship_matrix(path):
@@ -379,18 +451,23 @@ def classify(row):
     if whs in NL_WHS:
         if row.get('Customer Name') == BAYWA_IT_CUSTOMER and isinstance(row.get('Zip'), str) \
                 and 'block' in row['Zip'].lower():
-            return 'NL - BayWa IT (manual)', 'baywa_it'
+            # Now that this population has real prices (known rates + linear
+            # interpolation), reclassify it into its relevant population --
+            # structurally these are Italy LAND domestic shipments.
+            return 'NL - Domestic', 'baywa_it'
         if family == 'Battery' or dest == 'United Kingdom':
             return 'NL - Battery + UK', 'battery_uk'
         if is_support(row):
-            if forwarder in DBSCHENKER_FORWARDERS:
+            if ship_mode == 'SEA':
+                return 'NL - Support', 'matrix'
+            if forwarder in DBSCHENKER_FORWARDERS or is_default_forwarder(forwarder):
                 return 'NL - Support', 'dbs'
             if forwarder in MNT_FORWARDERS:
                 return 'NL - Support', 'q3_mnt'
             return 'NL - Support (manual)', 'manual'
         if ship_mode == 'SEA':
             return 'NL - Export (SEA)', 'matrix'
-        if forwarder in DBSCHENKER_FORWARDERS:
+        if forwarder in DBSCHENKER_FORWARDERS or is_default_forwarder(forwarder):
             return 'NL - Domestic', 'dbs'
         if forwarder in MNT_FORWARDERS:
             return 'NL - Domestic', 'q3_mnt'
@@ -404,7 +481,33 @@ def classify(row):
 # as a whole -- the group becomes exactly one consolidated output row)
 # --------------------------------------------------------------------------
 
+def _build_q3_samples(rows, q3_book):
+    """(destination country) -> [(customer, total_pallets, rate_EUR), ...],
+    built directly from every shipment that has a real Q3 AUGUST rate on
+    file, regardless of which population/method it ends up in -- used to
+    give unresolved MNT/Q3-priced groups a same-country, nearest-pallet
+    estimate."""
+    shipment_pallets = defaultdict(float)
+    shipment_country = {}
+    shipment_customer = {}
+    for row in rows:
+        sh = row.get('Shipment Number')
+        if not sh or sh == 'N/A':
+            continue
+        shipment_pallets[sh] += (num_pallets(row) or 0)
+        shipment_country[sh] = row.get('Destination country')
+        shipment_customer[sh] = row.get('Customer Name')
+
+    samples = defaultdict(list)
+    for sh, rate in q3_book.items():
+        if sh in shipment_pallets:
+            samples[shipment_country[sh]].append((shipment_customer[sh], shipment_pallets[sh], rate))
+    return samples
+
+
 def price_all(rows, dbs_book, matrix, mnt_uk_book, q3_book):
+    q3_samples = _build_q3_samples(rows, q3_book)
+
     recs = []
     for row in rows:
         population, method = classify(row)
@@ -431,9 +534,19 @@ def price_all(rows, dbs_book, matrix, mnt_uk_book, q3_book):
             zone, price, note = dbs_lookup(dbs_book, sample.get('Destination country code'),
                                             sample.get('Zip'), total_pallets or 1)
             consolidated['route'] = zone
-            consolidated['cost'] = price
-            consolidated['currency'] = 'EUR' if price is not None else None
-            consolidated['note'] = note or f'DBS Price list 2026, zone {zone}: {price} EUR for {total_pallets:g} total pallets.'
+            if price is not None:
+                consolidated['cost'] = price
+                consolidated['currency'] = 'EUR'
+                consolidated['note'] = note or f'DBS Price list 2026, zone {zone}: {price} EUR for {total_pallets:g} total pallets.'
+            else:
+                est_price, est_note = dbs_country_estimate(dbs_book, sample.get('Destination country code'),
+                                                             total_pallets or 1)
+                if est_price is not None:
+                    consolidated['cost'] = est_price
+                    consolidated['currency'] = 'EUR'
+                    consolidated['note'] = est_note
+                else:
+                    consolidated['note'] = (note or '') + ' ' + est_note
 
         elif method == 'q3_mnt':
             ship_num = sample.get('Shipment Number')
@@ -445,9 +558,17 @@ def price_all(rows, dbs_book, matrix, mnt_uk_book, q3_book):
                 consolidated['currency'] = 'EUR'
                 consolidated['note'] = f'Q3 AUGUST rate {rate} EUR for the whole shipment.'
             else:
-                consolidated['note'] = (
-                    f"MNT forwarder, but {'no real Logistic POD yet' if not is_pod else f'Shipment Number {ship_num!r} not on file in Q3 AUGUST'} "
-                    "-- not priced via DBS this round, confirm with WH contact.")
+                est_price, est_note = q3_country_estimate(q3_samples, sample.get('Destination country'),
+                                                            sample.get('Customer Name'), total_pallets or 1)
+                if est_price is not None:
+                    consolidated['route'] = 'Q3 AUGUST (estimated)'
+                    consolidated['cost'] = est_price
+                    consolidated['currency'] = 'EUR'
+                    consolidated['note'] = est_note
+                else:
+                    consolidated['note'] = (
+                        f"MNT forwarder, but {'no real Logistic POD yet' if not is_pod else f'Shipment Number {ship_num!r} not on file in Q3 AUGUST'}. "
+                        + est_note)
 
         elif method == 'matrix':
             org = sample.get('Sending WHS Code')
@@ -492,9 +613,16 @@ def price_all(rows, dbs_book, matrix, mnt_uk_book, q3_book):
                 consolidated['currency'] = 'EUR' if price is not None else None
                 consolidated['note'] = note or f'MNT UK full-truck rate {price} EUR for the whole shipment.'
             else:
-                consolidated['note'] = (f"Customer {customer!r} not in MNT UK price list, and no POD/Q3 AUGUST "
-                                          f"match for Shipment Number {ship_num!r} -- this population is priced "
-                                          "only from those two sources, confirm with WH contact.")
+                est_price, est_note = q3_country_estimate(q3_samples, sample.get('Destination country'),
+                                                            customer, total_pallets or 1)
+                if est_price is not None:
+                    consolidated['route'] = 'Q3 AUGUST (estimated)'
+                    consolidated['cost'] = est_price
+                    consolidated['currency'] = 'EUR'
+                    consolidated['note'] = est_note
+                else:
+                    consolidated['note'] = (f"Customer {customer!r} not in MNT UK price list, and no POD/Q3 AUGUST "
+                                              f"match for Shipment Number {ship_num!r}. " + est_note)
 
         elif method == 'baywa_it':
             capped_total = max(1, math.ceil(total_pallets - 1e-9)) if total_pallets else 1
