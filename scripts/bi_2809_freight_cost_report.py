@@ -95,7 +95,18 @@ DBSCHENKER_FORWARDERS = {'DBSCHENKER'}
 MNT_FORWARDERS = {'MNT'}
 
 BAYWA_IT_CUSTOMER = 'BayWa r.e. Solar Systems srl'
-BAYWA_IT_OVERRIDES = {1: 240, 2: 411, 12: 2100, 13: 1410}
+BAYWA_IT_KNOWN_RATES = {1: 240, 2: 411, 12: 2100, 13: 1410}
+# 4/6/8-pallet shipments have no rate on file -- interpolated linearly between
+# the nearest known brackets below and above (2 pallets->411 EUR, 12 pallets->
+# 2100 EUR), per the user's explicit request to derive these from the known
+# per-shipment prices by pallet count. Flagged as estimated in the Note.
+BAYWA_IT_INTERPOLATED = {}
+_lo_p, _lo_v = 2, BAYWA_IT_KNOWN_RATES[2]
+_hi_p, _hi_v = 12, BAYWA_IT_KNOWN_RATES[12]
+_slope = (_hi_v - _lo_v) / (_hi_p - _lo_p)
+for _p in (4, 6, 8):
+    BAYWA_IT_INTERPOLATED[_p] = round(_lo_v + _slope * (_p - _lo_p), 2)
+BAYWA_IT_OVERRIDES = {**BAYWA_IT_KNOWN_RATES, **BAYWA_IT_INTERPOLATED}
 
 CANOT_SINGLE_PALLET_RATE_ILS = 200
 CANOT_REGION_RATE_ILS = {'mainland': 1200, 'south': 1300, 'north': 1400}
@@ -491,10 +502,15 @@ def price_all(rows, dbs_book, matrix, mnt_uk_book, q3_book):
             consolidated['route'] = 'BayWa IT (manual)'
             consolidated['cost'] = price
             consolidated['currency'] = 'EUR' if price is not None else None
-            consolidated['note'] = (f'User-supplied BayWa IT rate {price} EUR for {capped_total} total pallets.'
-                                     if price is not None else
-                                     f'No BayWa IT override rate on file for {capped_total} total pallets '
-                                     f'(only 1, 2, 12, 13 are known) -- confirm with WH contact.')
+            if price is None:
+                consolidated['note'] = (f'No BayWa IT rate on file or interpolatable for {capped_total} total '
+                                         f'pallets -- confirm with WH contact.')
+            elif capped_total in BAYWA_IT_INTERPOLATED:
+                consolidated['note'] = (f'Estimated BayWa IT rate {price} EUR for {capped_total} total pallets '
+                                         f'-- interpolated linearly between the known 2-pallet (411 EUR) and '
+                                         f'12-pallet (2100 EUR) rates; not a directly quoted price, confirm with WH.')
+            else:
+                consolidated['note'] = f'User-supplied BayWa IT rate {price} EUR for {capped_total} total pallets.'
 
         priced_recs.append(consolidated)
 
@@ -651,7 +667,10 @@ def write_readme(wb, stats):
          'DBSCHENKER -> DBS Price list 2026 (zone+pallets); Forwarder=MNT -> Q3 AUGUST (POD + Shipment Number '
          'match), no match -> flagged, not DBS; any other forwarder -> "Manual Review" sheet, not priced here; '
          '(4) ShipMode=SEA -> Ship Cost Matrix instead of the forwarder split. BayWa r.e. Solar Systems srl '
-         '(Italy) "3c/4c block" ZIP lines use the fixed EUR-by-pallet override table regardless of forwarder.', arial),
+         '(Italy) "3c/4c block" ZIP lines use the fixed EUR-by-pallet override table regardless of forwarder '
+         '(1->240, 2->411, 12->2100, 13->1410 EUR, confirmed against the forwarded price-list screenshot; '
+         '4/6/8 pallets have no rate on file and are linearly interpolated between the 2- and 12-pallet rates, '
+         'flagged as estimated in the Note -- confirm with WH if a real quote exists).', arial),
         ('  Any other Sending WHS Code -> Ship Cost Matrix.', arial),
         ('', arial),
         ('Consolidation: every rate source above gives ONE flat price per shipment/order, not per line. Per this '
