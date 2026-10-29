@@ -4,7 +4,7 @@ import sys, openpyxl
 
 def key(r):
     s = lambda v: (str(v).strip().upper() if v else '')
-    return (s(r[1]), s(r[4]), s(r[5]), s(r[9]), s(r[10]), s(r[11]))
+    return (s(r[1]), s(r[3]), s(r[4]), s(r[5]), s(r[9]), s(r[10]), s(r[11]))
 
 matrix, nl, out = sys.argv[1:4]
 ids = {}
