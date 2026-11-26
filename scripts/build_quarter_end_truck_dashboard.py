@@ -139,6 +139,13 @@ for i in range(20):
     S.cell(row=r+0,column=9,value=f'=IF(A{r}="","",A{r})').font=f(9,c=GRAY)
 S['I37'].value='All'
 for i in range(20): S.cell(row=CL0+i+1,column=9,value=f'=IF(A{CL0+i}="","",A{CL0+i})')
+hdr(S,'K36','Sending warehouses'); hdr(S,'L36','Dropdown list'); S.column_dimensions['K'].width=18; S.column_dimensions['L'].width=14
+for i,wn in enumerate(['3PLDBSNL','3PLDBSBRNL','3PLAWLNL']): S.cell(row=37+i,column=11,value=wn)
+S['L37']='All'
+for i in range(8):
+    c=S.cell(row=37+i,column=11); c.fill=INPUT_FILL; c.font=INPUT_FONT; c.border=BOX
+    S.cell(row=38+i,column=12,value=f'=IF(K{37+i}="","",K{37+i})')
+name('WhsList',f"{SN}$K$37:$K$44")
 name('TTCountry',f"{SN}$A${CL0}:$A${CL1}"); name('TTDays',f"{SN}$B${CL0}:$B${CL1}"); name('CountryList',f"{SN}$A${CL0}:$A${CL1}")
 S['A58']='Transit days: DBS lines use the "Transit Days" column of Backlog_NL. MNT direct trucks use the TT-dedicated column above (kept separate as requested).'; S['A58'].font=f(9,c=GRAY)
 
@@ -163,6 +170,7 @@ notes=[
  'Customer closures come from "Close WH - Christmas 2026" (sheet Summary 2026). Customers can have several windows; the workbook checks every window, so a customer that reopens between two closures is handled. "Final WH close in Q" = start of the latest window that begins on/before quarter end.',
  'Trucks = ROUNDUP(pallets / capacity) per group of Country + Forwarder + DG/Non-DG + pickup date. Only LAND lines are trucked; SEA/AIR lines are listed but need no truck.',
  'Risk colours: RED = missing pallets/TT/date, pickup date already passed, wrong forwarder, or TT not synced with document close + customer WH closure. ORANGE = pickup within the approaching window, high pallet volume, long TT vs window, tight buffer, missing value / closure data, non-standard forwarder. GREEN = none of these.',
+ 'Weekly Booking Plan tab: one row per delivery stop (pickup date + sending warehouse + country + customer + address + cargo type + forwarder), sorted by date, filterable by week / warehouse / country / forwarder. Trucks are loaded per sending warehouse.',
  'Capacity: the Tracking sheet is pre-built for 1,200 order lines (SE_REP rows 2-1201) and Backlog_NL rows 2-3000. Paste a refreshed SE REP export over SE_REP and a refreshed Backlog over Backlog_NL (same columns) and everything updates.',
 ]
 for i,t in enumerate(notes):
@@ -258,7 +266,7 @@ add('S','Pickup date (= doc close)',12,'dd-mmm-yy','=IF(OR([AF]=0,[I]=""),"",[I]
 add('T','Days to pickup',8,'0','=IF([S]="","",[S]-ReportDate)')
 add('U','Days arrival vs last open day (neg = in closure)',12,'0','=IF(OR([Q]="",[R]=""),"",[Q]-1-[R])')
 add('V','Truck capacity',8,'0','=IF([AF]=0,"",IF([J]="DG",CapDG,CapStd))')
-add('W','Truck group key',22,None,'=IF(OR([AF]=0,[F]<>"LAND",NOT(ISNUMBER([G])),[S]=""),"",IF([G]<=0,"",[D]&"|"&[K]&"|"&[J]&"|"&[S]&IF(AND(MNTperCust="Yes",[K]="MNT"),"|"&LEFT([C],40)&"|"&[BA],"")))')
+add('W','Truck group key',22,None,'=IF(OR([AF]=0,[F]<>"LAND",NOT(ISNUMBER([G])),[S]=""),"",IF([G]<=0,"",[BE]&"|"&[D]&"|"&[K]&"|"&[J]&"|"&[S]&IF(AND(MNTperCust="Yes",[K]="MNT"),"|"&LEFT([C],40)&"|"&[BA],"")))')
 add('X','Group pallets',8,'0','=IF([W]="","",SUMIFS([G:],[W:],[W]))')
 add('Y','Group trucks (est.)',9,'0','=IF([W]="","",ROUNDUP([X]/[V],0))')
 add('Z','Trucks counted once',9,'0','=IF([W]="","",IF(COUNTIF($W$'+str(R0)+':[W],[W])=1,[Y],0))')
@@ -292,6 +300,15 @@ add('AZ','No-closure customer rank',7,'0','=IF([AY]=1,COUNTIFS([AY:],1,[AS:],"<"
 add('BA','Ship-to zip + city',16,None,'=IF([AF]=0,"",LEFT('+R('Ship To Zip')+'&" "&'+R('Ship To City')+',40))')
 add('BB','Ship-to city',14,None,'=IF([AF]=0,"",'+R('Ship To City')+'&"")')
 add('BC','TT-WH sync conflict flag',8,'0','=IF([AF]=0,0,IF(AND([Q]<>"",[R]<>""),IF([R]>=[Q],1,0),0))')
+add('BE','Sending warehouse',12,None,'=IF([AF]=0,"",'+R('Sending Whs')+'&"")')
+add('BF','Delivery address',46,None,'=IF([AF]=0,"",TRIM('+R('Ship To Address')+'&""))')
+add('BG','Stop key',20,None,'=IF(OR([AF]=0,[S]=""),"",TEXT([S],"yyyymmdd")&"|"&[BE]&"|"&[D]&"|"&LEFT([C],30)&"|"&LEFT([BF],30)&"|"&[J]&"|"&[K])')
+add('BH','Stop first line',7,'0','=IF([BG]="",0,IF(COUNTIF($BG$'+str(R0)+':[BG],[BG])=1,1,0))')
+add('BI','Risk rank (3/2/1)',7,'0','=IF([AE]="Red",3,IF([AE]="Orange",2,IF([AE]="Green",1,0)))')
+add('BJ','In booking-plan filter',7,'0','=IF(OR([AF]=0,[S]=""),0,IF(AND(OR(PlanWeek="All",[AB]=PlanWeek),OR(PlanWhs="All",[BE]=PlanWhs),OR(PlanCountry="All",[D]=PlanCountry),OR(PlanFwd="All",[K]=PlanFwd)),1,0))')
+add('BK','Stop rank',7,'0','=IF(AND([BH]=1,[BJ]=1),COUNTIFS([BH:],1,[BJ:],1,[BG:],"<"&[BG])+1,"")')
+add('BL','Binding WH closure end',11,'dd-mmm-yy','=IF(OR([AF]=0,[Q]=""),"",INDEX(WH_End,[AJ],[AL]))')
+add('BM','Stop+risk key',20,None,'=IF([BG]="","",[BG]&"|"&[BI])')
 add('BD','Latest pickup that meets WH closure',12,'dd-mmm-yy','=IF(OR([AF]=0,[Q]="",[N]=""),"",WORKDAY(IF(TTMode="Business",WORKDAY(WORKDAY([Q],-1,Holidays),-[N],Holidays),WORKDAY([Q],-1,Holidays)-[N])+1,-1,Holidays))')
 from openpyxl.utils import column_index_from_string as CI
 keys=[c[0] for c in cols]
@@ -307,7 +324,7 @@ def tr(formula,r):
     return out.replace('{rr}',str(rr))
 # title
 T['A1']='Shipment tracking - order-line level'; T['A1'].font=f(18,True,BLUE)
-T['A2']='One row per SE REP order line. Pallets from Backlog_NL (col BZ). Columns A-AE are the planning view; AF onward are helper columns (grouped - expand with [+]).'; T['A2'].font=f(9,c=GRAY)
+T['A2']='One row per SE REP order line. Pallets from Backlog_NL (col BZ). Columns A-AE and BE-BF are the planning view; the other columns are helpers (grouped - expand with [+]).'; T['A2'].font=f(9,c=GRAY)
 T['A3']='="Report date: "&TEXT(ReportDate,"dd-mmm-yyyy")&"   |   Lines: "&SUM(AF'+str(R0)+':AF'+str(R1)+')&"   |   RED: "&COUNTIF(AE'+str(R0)+':AE'+str(R1)+',"Red")&"   ORANGE: "&COUNTIF(AE'+str(R0)+':AE'+str(R1)+',"Orange")&"   GREEN: "&COUNTIF(AE'+str(R0)+':AE'+str(R1)+',"Green")'
 T['A3'].font=f(10,True,BLUE)
 HR=5
@@ -322,6 +339,7 @@ T.row_dimensions[HR].height=42
 T.freeze_panes=f'D{R0}'
 T.auto_filter.ref=f"A{HR}:{L(CI('AE'))}{R1}"
 T.column_dimensions.group('AF','BD',hidden=True,outline_level=1)
+T.column_dimensions.group('BG','BM',hidden=True,outline_level=1)
 # conditional formats
 rng=f"AE{R0}:AE{R1}"
 T.conditional_formatting.add(rng,CellIsRule(operator='equal',formula=['"Red"'],fill=RED_F,font=Font(name=FONT,bold=True,color='7A0000')))
@@ -505,6 +523,15 @@ W['A2'].font=f(9,c=GRAY)
 heads=['Week start (Mon)','Week end (Sun)','ISO wk','Lines','Pallets','DG pallets','Non-DG pallets','Trucks DBS','Trucks MNT','Trucks DG','Trucks Non-DG','TOTAL est. trucks','Confirmed trucks','Still to book','Note']
 for i,t in enumerate(heads):
     c=W.cell(row=4,column=1+i,value=t); c.font=f(9,True,WHITE); c.fill=fill(BLUE); c.alignment=Alignment(wrap_text=True,horizontal='center',vertical='center')
+for k in range(4):
+    c=W.cell(row=4,column=16+k,value=f'=IF(INDEX(WhsList,{k+1})="","","Trucks "&INDEX(WhsList,{k+1}))'); c.font=f(9,True,WHITE); c.fill=fill(AZURE); c.alignment=Alignment(wrap_text=True,horizontal='center',vertical='center')
+    for r_ in range(5,17):
+        W.cell(row=r_,column=16+k,value=f'=IF({L(16+k)}$4="","",SUMIFS({TR("Z")},{TR("AB")},$A{r_},{TR("BE")},INDEX(WhsList,{k+1})))')
+    W.cell(row=17,column=16+k,value=f'=IF({L(16+k)}$4="","",SUMIFS({TR("Z")},{TR("BE")},INDEX(WhsList,{k+1}))-SUM({L(16+k)}5:{L(16+k)}16))')
+    W.cell(row=18,column=16+k,value=f'=IF({L(16+k)}$4="","",SUM({L(16+k)}5:{L(16+k)}17))')
+    for r_ in range(5,19):
+        cc=W.cell(row=r_,column=16+k); cc.font=f(10,b=(r_==18)); cc.border=BOX; cc.number_format='0;-0;"-"'; cc.alignment=Alignment(horizontal='right')
+        if r_==18: cc.fill=fill(LIGHT)
 W.row_dimensions[4].height=32
 for i in range(12):
     r=5+i
@@ -733,6 +760,90 @@ for i in range(15):
     K[f'A{r}']=f'=IFERROR(INDEX({TR("C")},{m}),"")'; K[f'B{r}']=f'=IFERROR(INDEX({TR("D")},{m}),"")'
     for c in range(1,3): K.cell(row=r,column=c).font=f(9); K.cell(row=r,column=c).border=Border(bottom=thin)
 K.sheet_properties.tabColor=AZURE
+
+
+# ---------- Weekly Booking Plan ----------
+P=wb.create_sheet('Weekly Booking Plan',1); P.sheet_view.showGridLines=False; P.sheet_properties.tabColor=BLUE
+for i,wd in enumerate([5,11,11,13,15,32,46,9,9,6,8,6,12,11,11,11,9,8,9,8,9,52]): P.column_dimensions[L(i+1)].width=wd
+P.column_dimensions['AA'].hidden=True; P.column_dimensions['Z'].hidden=True
+for r_ in (1,2):
+    for c_ in range(1,23): P.cell(row=r_,column=c_).fill=fill(BLUE)
+P['B1']='Weekly booking plan - trucks to book'; P['B1'].font=Font(name=FONT,size=20,bold=True,color=WHITE)
+P['B2']='="One row per delivery stop: pickup date x sending warehouse x destination x customer x address x cargo type x forwarder.  Report date "&TEXT(ReportDate,"dd-mmm-yyyy")&"  |  ESTIMATED trucks, capacity "&CapStd&" pallets (DG "&CapDG&")"'; P['B2'].font=Font(name=FONT,size=10,color=SKY)
+P.row_dimensions[1].height=34
+for c_ in range(2,3): P.cell(row=3,column=c_).fill=fill('FF3232')
+P.row_dimensions[3].height=4
+# helper dropdown lists
+P['Z4']='All'
+for i in range(12): P.cell(row=5+i,column=26,value=f"='Weekly Truck Forecast'!A{5+i}").number_format='dd-mmm-yy'
+sel=[('B','Week (pickup week start)',2),('D','Sending warehouse',1),('E','Country',1),('F','Forwarder',1)]
+for col,lab,span in sel:
+    P[f'{col}4']=lab; P[f'{col}4'].font=f(9,True,GRAY)
+P.merge_cells('B5:C5')
+for cell in ('B5','D5','E5','F5','C5'):
+    c=P[cell]; c.fill=INPUT_FILL; c.font=Font(name=FONT,size=11,bold=True,color='0000FF'); c.border=BOX; c.alignment=Alignment(horizontal='center')
+    P[cell].number_format='dd-mmm-yyyy'
+for cell in ('B5','D5','E5','F5'): P[cell]='All'
+P.row_dimensions[5].height=22
+dvw=DataValidation(type='list',formula1="='Weekly Booking Plan'!$Z$4:$Z$16",allow_blank=False); dvh=DataValidation(type='list',formula1=f"={SN}$L$37:$L$45",allow_blank=False)
+dvc=DataValidation(type='list',formula1=f"={SN}$I$37:$I$57",allow_blank=False); dvf=DataValidation(type='list',formula1='"All,DBS,MNT"',allow_blank=False)
+for d in (dvw,dvh,dvc,dvf): P.add_data_validation(d)
+dvw.add('B5'); dvh.add('D5'); dvc.add('E5'); dvf.add('F5')
+for n,cell in (('PlanWeek','B'),('PlanWhs','D'),('PlanCountry','E'),('PlanFwd','F')): name(n,f"'Weekly Booking Plan'!${cell}$5")
+PF=TR('BJ')
+def kp(col,lab,formula,fmt):
+    P[f'{col}7']=lab; P[f'{col}7'].font=f(9,True,GRAY)
+    c=P[f'{col}8']; c.value=formula; c.font=Font(name=FONT,size=20,bold=True,color=BLUE); c.number_format=fmt; c.alignment=Alignment(horizontal='left')
+    P[f'{col}7'].border=Border(top=Side(style='thick',color=AZURE))
+kp('B','TRUCKS TO BOOK (EST.)',f'=SUMIFS({TR("Z")},{PF},1)','#,##0')
+kp('D','DBS TRUCKS',f'=SUMIFS({TR("Z")},{PF},1,{TR("K")},"DBS")','#,##0')
+kp('E','MNT TRUCKS',f'=SUMIFS({TR("Z")},{PF},1,{TR("K")},"MNT")','#,##0')
+kp('F','PALLETS  |  VALUE (USD)',f'=TEXT(SUMIFS({TR("G")},{PF},1),"#,##0")&" pallets  |  $"&TEXT(SUMIFS({TR("H")},{PF},1),"#,##0")','@')
+kp('G','DELIVERY STOPS  |  ORDER LINES',f'=COUNTIFS({TR("BK")},">0")&" stops  |  "&COUNTIFS({PF},1)&" lines"','@')
+P['F8'].font=Font(name=FONT,size=11,bold=True,color=BLUE); P['G8'].font=Font(name=FONT,size=11,bold=True,color=BLUE); P['G8'].alignment=Alignment(horizontal='left',indent=1)
+P.row_dimensions[8].height=28
+P['B10']='Trucks to book per stop = whole trucks counted once per truck load. DBS loads are pooled per warehouse + country + pickup day + DG, so several stops can share one truck (see "Truck share" and "Trucks in shared load"). MNT trucks are direct: one per customer + address + day. A red row = review before booking (reasons on the right).'
+P['B10'].font=f(8,c=GRAY)
+PH=12; PR0=13; PCAP=600
+heads=['#','Week start','Pickup date (doc close)','Sending warehouse','Destination country','Customer','Delivery address','Cargo type','Forwarder','Lines','Pallets','TT (days)','Shipment value (USD)','Customer WH closes from','WH reopens after','Arrival if shipped at pickup date','TRUCKS TO BOOK','Truck share','Trucks in shared load','Truck capacity','Risk','Risk reasons (worst line of the stop)']
+for i,t in enumerate(heads):
+    c=P.cell(row=PH,column=1+i,value=t); c.font=f(9,True,WHITE); c.fill=fill(BLUE if t!='TRUCKS TO BOOK' else 'FF3232'); c.alignment=Alignment(wrap_text=True,horizontal='center',vertical='center'); c.border=BOX
+P.row_dimensions[PH].height=40
+for i in range(PCAP):
+    r_=PR0+i
+    P[f'A{r_}']=i+1
+    P[f'AA{r_}']=f'=IFERROR(MATCH($A{r_},{TR("BK")},0),"")'
+    ix=lambda k: f'=IF($AA{r_}="","",INDEX({TR(k)},$AA{r_}))'
+    key=f'INDEX({TR("BG")},$AA{r_})'
+    P[f'B{r_}']=ix('AB'); P[f'C{r_}']=ix('S'); P[f'D{r_}']=ix('BE'); P[f'E{r_}']=ix('D'); P[f'F{r_}']=ix('C'); P[f'G{r_}']=ix('BF'); P[f'H{r_}']=ix('J'); P[f'I{r_}']=ix('K')
+    P[f'J{r_}']=f'=IF($AA{r_}="","",COUNTIFS({TR("BG")},{key}))'
+    P[f'K{r_}']=f'=IF($AA{r_}="","",SUMIFS({TR("G")},{TR("BG")},{key}))'
+    P[f'L{r_}']=ix('N')
+    P[f'M{r_}']=f'=IF($AA{r_}="","",SUMIFS({TR("H")},{TR("BG")},{key}))'
+    P[f'N{r_}']=ix('Q'); P[f'O{r_}']=ix('BL'); P[f'P{r_}']=ix('R')
+    P[f'Q{r_}']=f'=IF($AA{r_}="","",SUMIFS({TR("Z")},{TR("BG")},{key}))'
+    P[f'R{r_}']=f'=IF($AA{r_}="","",SUMIFS({TR("AA")},{TR("BG")},{key}))'
+    P[f'S{r_}']=ix('Y'); P[f'T{r_}']=ix('V')
+    worst=f'SUMPRODUCT(MAX(({TR("BG")}={key})*{TR("BI")}))'
+    P[f'U{r_}']=f'=IF($AA{r_}="","",IF({worst}=3,"Red",IF({worst}=2,"Orange","Green")))'
+    P[f'V{r_}']=f'=IF($AA{r_}="","",IFERROR(INDEX({TR("AD")},MATCH({key}&"|"&{worst},{TR("BM")},0)),""))'
+    for c_ in range(1,23):
+        cell=P.cell(row=r_,column=c_); cell.font=f(9); cell.border=Border(bottom=thin)
+    for col in 'BCNOP': P[f'{col}{r_}'].number_format='dd-mmm-yy'
+    P[f'M{r_}'].number_format='#,##0'; P[f'R{r_}'].number_format='0.00'; P[f'Q{r_}'].font=f(10,True,BLUE)
+    for col in 'ABCDEHIJKLQRSTU': P[f'{col}{r_}'].alignment=Alignment(horizontal='center')
+    P[f'A{r_}'].font=f(8,c=GRAY)
+rg=f'U{PR0}:U{PR0+PCAP-1}'
+P.conditional_formatting.add(rg,CellIsRule(operator='equal',formula=['"Red"'],fill=RED_F,font=Font(name=FONT,bold=True,color='7A0000')))
+P.conditional_formatting.add(rg,CellIsRule(operator='equal',formula=['"Orange"'],fill=ORG_F,font=Font(name=FONT,bold=True,color='7A4A00')))
+P.conditional_formatting.add(rg,CellIsRule(operator='equal',formula=['"Green"'],fill=GRN_F,font=Font(name=FONT,bold=True,color='1D5A33')))
+P.conditional_formatting.add(f'I{PR0}:I{PR0+PCAP-1}',CellIsRule(operator='equal',formula=['"MNT"'],font=Font(name=FONT,bold=True,color=AZURE)))
+P.conditional_formatting.add(f'A{PR0+1}:V{PR0+PCAP-1}',FormulaRule(formula=[f'AND($B{PR0+1}<>"",$B{PR0+1}<>$B{PR0})'],border=Border(top=Side(style='medium',color=BLUE))))
+P.conditional_formatting.add(f'N{PR0}:N{PR0+PCAP-1}',FormulaRule(formula=[f'AND(ISNUMBER($N{PR0}),ISNUMBER($P{PR0}),$P{PR0}>=$N{PR0})'],fill=RED_F))
+P.freeze_panes=f'H{PR0}'
+P.auto_filter.ref=f'A{PH}:V{PR0+PCAP-1}'
+P.page_setup.orientation='landscape'; P.page_setup.fitToWidth=1; P.page_setup.fitToHeight=0
+P.sheet_properties.pageSetUpPr=openpyxl.worksheet.properties.PageSetupProperties(fitToPage=True)
 
 # page setup
 for w_ in (wsD,wsW,wsC,wsF,wsT,wsS,wsK):
