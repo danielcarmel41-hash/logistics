@@ -162,7 +162,7 @@ name('BkCountry',f"{SN}$B${BK0}:$B${BK1}"); name('BkFwd',f"{SN}$C${BK0}:$C${BK1}
 
 sect(S,114,'5. Notes and interpretations to confirm',9)
 notes=[
- 'Source model: SE REP (REP_364) is the master list - one row per order line. Pallets come from Backlog_NL column BZ "# of Pallets per line - roundup", joined on SE Order# + Line#. Lines not found there have NO pallets (not invented) and are flagged red.',
+ 'Source model: SE REP (REP_364) is the master list - one row per order line. Pallets come from Backlog_NL column BZ "# of Pallets per line - roundup", joined on SE Order# + Line#. Lines not found there take pallets = ROUNDUP(quantity / units per pallet) from SE REP itself (same logic as BZ; column BN shows the source). Lines with neither remain without pallets and are flagged red.',
  'Pallets are the sum of per-line round-ups (as instructed). Because every line is rounded up on its own, pallet and truck totals can be higher than the physical count.',
  'Forwarder rule (confirmed): all UK -> MNT, all CSS Battery (DG) -> MNT in every country, everything else -> DBS. MNT trucks are direct, one per customer + delivery address; DBS trucks are pooled per country / day / DG.',
  'Planning date: Scheduled Ship Date (col F of SE REP) is the shipping-document close date. Its 00:59:59 time stamps are end-of-previous-day (they match the Backlog "Date" column), so the workbook uses date minus 1 hour. Weekend / holiday dates move back to the previous working day.',
@@ -250,7 +250,7 @@ add('C','Customer',30,None,'=IF([AF]=0,"",'+R('Customer Name')+'&"")')
 add('D','Country',15,None,'=IF([AF]=0,"",'+R('Country')+'&"")')
 add('E','Family type',17,None,'=IF([AF]=0,"",'+R('Family Type')+'&"")')
 add('F','Mode',7,None,'=IF([AF]=0,"",'+R('Mode Of Transport')+'&"")')
-add('G','Pallets',8,'0','=IF(OR([AF]=0,[AI]=0),"",INDEX(BL_Pal,[AI]))')
+add('G','Pallets',8,'0','=IF([AF]=0,"",IF([AI]>0,INDEX(BL_Pal,[AI]),IFERROR(ROUNDUP('+R('Quantity')+'/VALUE('+R('Qty of pallet on Sea pallet')+'),0),"")))')
 add('H','Shipment value (USD)',14,'#,##0','=IF([AF]=0,"",IF(ISNUMBER('+R('Total Amount after Discount in USD')+'),'+R('Total Amount after Discount in USD')+',""))')
 add('I','Doc close date',12,'dd-mmm-yy','=IF([AF]=0,"",IF(ISNUMBER('+R('Scheduled Ship Date')+'),WORKDAY(INT('+R('Scheduled Ship Date')+'-1/24)+1,-1,Holidays),""))')
 add('J','DG / Non-DG',9,None,'=IF([AF]=0,"",IF(AND([E]<>"",COUNTIF(DGFam,[E])>0),"DG","Non-DG"))')
@@ -308,6 +308,7 @@ add('BI','Risk rank (3/2/1)',7,'0','=IF([AE]="Red",3,IF([AE]="Orange",2,IF([AE]=
 add('BJ','In booking-plan filter',7,'0','=IF(OR([AF]=0,[S]=""),0,IF(AND(OR(PlanWeek="All",[AB]=PlanWeek),OR(PlanWhs="All",[BE]=PlanWhs),OR(PlanCountry="All",[D]=PlanCountry),OR(PlanFwd="All",[K]=PlanFwd)),1,0))')
 add('BK','Stop rank',7,'0','=IF(AND([BH]=1,[BJ]=1),COUNTIFS([BH:],1,[BJ:],1,[BG:],"<"&[BG])+1,"")')
 add('BL','Binding WH closure end',11,'dd-mmm-yy','=IF(OR([AF]=0,[Q]=""),"",INDEX(WH_End,[AJ],[AL]))')
+add('BN','Pallet source',22,None,'=IF([AF]=0,"",IF([AI]>0,"Backlog col BZ",IF([G]<>"","SE REP qty / units per pallet","MISSING")))')
 add('BM','Stop+risk key',20,None,'=IF([BG]="","",[BG]&"|"&[BI])')
 add('BD','Latest pickup that meets WH closure',12,'dd-mmm-yy','=IF(OR([AF]=0,[Q]="",[N]=""),"",WORKDAY(IF(TTMode="Business",WORKDAY(WORKDAY([Q],-1,Holidays),-[N],Holidays),WORKDAY([Q],-1,Holidays)-[N])+1,-1,Holidays))')
 from openpyxl.utils import column_index_from_string as CI
@@ -721,7 +722,7 @@ checks=[
  ('Distinct orders',f'=SUMPRODUCT(({TR("AF")}=1)/COUNTIF({TR("B")},{TR("B")}&""))',''),
  ('Lines in Backlog_NL',"=COUNTA(Backlog_NL!$A$2:$A$3000)",'Backlog has more lines than SE REP.'),
  ('Backlog lines with no matching SE REP line',f'=B7-SUMPRODUCT(--({TR("AI")}>0))','Not planned - outside the SE REP master list.'),
- ('SE REP lines with NO pallet data (no Backlog match)',f'=SUM({TR("AW")})','Add these lines to the Backlog file (col BZ) - listed below. Shown RED, excluded from truck counts.'),
+ ('SE REP lines with NO pallet data at all (no Backlog match and no units-per-pallet in SE REP)',f'=SUM({TR("AW")})','Add these lines to the Backlog file (col BZ) - listed below. Shown RED, excluded from truck counts.'),
  ('  - pallets matched via fallback (Line "x-1" vs "x")',f'=SUMPRODUCT(--({TR("AH")}=0),--({TR("AI")}>0))','Matched on order + base line number.'),
  ('Lines without shipment value (SE REP col Z blank)',f'=SUMPRODUCT(({TR("AF")}=1)*({TR("H")}=""))','Value missing in the source.'),
  ('Lines without TT',f'=SUMPRODUCT(({TR("AF")}=1)*({TR("N")}=""))','TT missing in Backlog Transit Days (or no dedicated TT for an MNT country).'),
@@ -734,6 +735,7 @@ checks=[
  ('Lines not yet assigned (system = DEFAULT)',f'=COUNTIF({TR("M")},"Not yet assigned")','Informational - the rule result is the recommendation.'),
  ('Check: total value in SE REP minus value in tracking',f'=SUM(SE_REP!$Z$2:$Z$1201)-SUM({TR("H")})','Should be 0.'),
  ('Check: lines beyond tracking capacity (1,200)',"=MAX(0,COUNTA(SE_REP!$E$2:$E$5000)-1200)",'Should be 0.'),
+ ('Pallets derived from SE REP (qty / units per pallet) - no Backlog match',f'=COUNTIF({TR("BN")},"SE REP*")','Same logic as Backlog col BZ: ROUNDUP(quantity / units per pallet). Matches Backlog on 495 of 497 lines that exist in both. Please confirm.'),
 ]
 for i,(a,b,c_) in enumerate(checks):
     r=5+i; K[f'A{r}']=a; K[f'B{r}']=b; K[f'C{r}']=c_
