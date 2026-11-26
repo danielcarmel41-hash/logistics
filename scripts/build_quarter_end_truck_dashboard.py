@@ -61,7 +61,7 @@ RC=lambda h: L(rep_h.index(h)+1)
 BC=lambda h: L(bl_h.index(h)+1)
 assert BC('# of Pallets per line - roundup')=='BZ', BC('# of Pallets per line - roundup')
 assert RC('Scheduled Ship Date')=='F' and RC('Total Amount after Discount in USD')=='Z'
-MAXR=1200; R0=6; R1=R0+MAXR-1          # tracking rows 6..1205 <-> SE_REP rows 2..1201
+MAXR=800; R0=6; R1=R0+MAXR-1          # tracking rows 6..1205 <-> SE_REP rows 2..1201
 name('BL_Ord',f"Backlog_NL!${BC('SE Order#')}$2:${BC('SE Order#')}$3000")
 name('BL_Line',f"Backlog_NL!${BC('Line#')}$2:${BC('Line#')}$3000")
 name('BL_Pal',f"Backlog_NL!$BZ$2:$BZ$3000")
@@ -171,7 +171,7 @@ notes=[
  'Trucks = ROUNDUP(pallets / capacity) per group of Country + Forwarder + DG/Non-DG + pickup date. Only LAND lines are trucked; SEA/AIR lines are listed but need no truck.',
  'Risk colours: RED = missing pallets/TT/date, pickup date already passed, wrong forwarder, or TT not synced with document close + customer WH closure. ORANGE = pickup within the approaching window, high pallet volume, long TT vs window, tight buffer, missing value / closure data, non-standard forwarder. GREEN = none of these.',
  'Weekly Booking Plan tab: one row per delivery stop (pickup date + sending warehouse + country + customer + address + cargo type + forwarder), sorted by date, filterable by week / warehouse / country / forwarder. Trucks are loaded per sending warehouse.',
- 'Capacity: the Tracking sheet is pre-built for 1,200 order lines (SE_REP rows 2-1201) and Backlog_NL rows 2-3000. Paste a refreshed SE REP export over SE_REP and a refreshed Backlog over Backlog_NL (same columns) and everything updates.',
+ 'Capacity: the Tracking sheet is pre-built for 800 order lines (SE_REP rows 2-801) and Backlog_NL rows 2-3000. Paste a refreshed SE REP export over SE_REP and a refreshed Backlog over Backlog_NL (same columns) and everything updates.',
 ]
 for i,t in enumerate(notes):
     c=S.cell(row=115+i,column=1,value=f'{i+1}. {t}'); c.font=f(9); c.alignment=Alignment(wrap_text=True,vertical='top')
@@ -380,7 +380,7 @@ D_['C5']='All'; D_['E5']='All'; D_['G5']='All'
 for col in 'IK': D_[f'{col}5'].number_format='dd-mmm-yyyy'
 D_['M4']='Clear dates = all'; D_['M4'].font=f(8,c=GRAY)
 D_.row_dimensions[5].height=22
-d1=DataValidation(type='list',formula1=f"={SN}$I$37:$I$57",allow_blank=False); d2=DataValidation(type='list',formula1='"All,DBS,MNT"',allow_blank=False); d3=DataValidation(type='list',formula1='"All,DG,Non-DG"',allow_blank=False)
+d1=DataValidation(type='list',formula1=f"{SN}$I$37:$I$57",allow_blank=False); d2=DataValidation(type='list',formula1='"All,DBS,MNT"',allow_blank=False); d3=DataValidation(type='list',formula1='"All,DG,Non-DG"',allow_blank=False)
 d4=DataValidation(type='date',operator='greaterThan',formula1='36526',allow_blank=True)
 for d in (d1,d2,d3,d4): D_.add_data_validation(d)
 d1.add('C5'); d2.add('E5'); d3.add('G5'); d4.add('I5'); d4.add('K5')
@@ -733,8 +733,8 @@ checks=[
  ('Lines with WRONG forwarder vs rule',f'=COUNTIF({TR("M")},"WRONG FORWARDER")','See Forwarder Allocation tab.'),
  ('Lines with non-standard forwarder (e.g. UPS)',f'=COUNTIF({TR("M")},"Non-standard forwarder")',''),
  ('Lines not yet assigned (system = DEFAULT)',f'=COUNTIF({TR("M")},"Not yet assigned")','Informational - the rule result is the recommendation.'),
- ('Check: total value in SE REP minus value in tracking',f'=SUM(SE_REP!$Z$2:$Z$1201)-SUM({TR("H")})','Should be 0.'),
- ('Check: lines beyond tracking capacity (1,200)',"=MAX(0,COUNTA(SE_REP!$E$2:$E$5000)-1200)",'Should be 0.'),
+ ('Check: total value in SE REP minus value in tracking',f'=SUM(SE_REP!$Z$2:$Z$801)-SUM({TR("H")})','Should be 0.'),
+ ('Check: lines beyond tracking capacity (800)',"=MAX(0,COUNTA(SE_REP!$E$2:$E$5000)-800)",'Should be 0.'),
  ('Pallets derived from SE REP (qty / units per pallet) - no Backlog match',f'=COUNTIF({TR("BN")},"SE REP*")','Same logic as Backlog col BZ: ROUNDUP(quantity / units per pallet). Matches Backlog on 495 of 497 lines that exist in both. Please confirm.'),
 ]
 for i,(a,b,c_) in enumerate(checks):
@@ -787,8 +787,8 @@ for cell in ('B5','D5','E5','F5','C5'):
     P[cell].number_format='dd-mmm-yyyy'
 for cell in ('B5','D5','E5','F5'): P[cell]='All'
 P.row_dimensions[5].height=22
-dvw=DataValidation(type='list',formula1="='Weekly Booking Plan'!$Z$4:$Z$16",allow_blank=False); dvh=DataValidation(type='list',formula1=f"={SN}$L$37:$L$45",allow_blank=False)
-dvc=DataValidation(type='list',formula1=f"={SN}$I$37:$I$57",allow_blank=False); dvf=DataValidation(type='list',formula1='"All,DBS,MNT"',allow_blank=False)
+dvw=DataValidation(type='list',formula1="'Weekly Booking Plan'!$Z$4:$Z$16",allow_blank=False); dvh=DataValidation(type='list',formula1=f"{SN}$L$37:$L$45",allow_blank=False)
+dvc=DataValidation(type='list',formula1=f"{SN}$I$37:$I$57",allow_blank=False); dvf=DataValidation(type='list',formula1='"All,DBS,MNT"',allow_blank=False)
 for d in (dvw,dvh,dvc,dvf): P.add_data_validation(d)
 dvw.add('B5'); dvh.add('D5'); dvc.add('E5'); dvf.add('F5')
 for n,cell in (('PlanWeek','B'),('PlanWhs','D'),('PlanCountry','E'),('PlanFwd','F')): name(n,f"'Weekly Booking Plan'!${cell}$5")
@@ -806,7 +806,7 @@ P['F8'].font=Font(name=FONT,size=11,bold=True,color=BLUE); P['G8'].font=Font(nam
 P.row_dimensions[8].height=28
 P['B10']='Trucks to book per stop = whole trucks counted once per truck load. DBS loads are pooled per warehouse + country + pickup day + DG, so several stops can share one truck (see "Truck share" and "Trucks in shared load"). MNT trucks are direct: one per customer + address + day. A red row = review before booking (reasons on the right).'
 P['B10'].font=f(8,c=GRAY)
-PH=12; PR0=13; PCAP=600
+PH=12; PR0=13; PCAP=400
 heads=['#','Week start','Pickup date (doc close)','Sending warehouse','Destination country','Customer','Delivery address','Cargo type','Forwarder','Lines','Pallets','TT (days)','Shipment value (USD)','Customer WH closes from','WH reopens after','Arrival if shipped at pickup date','TRUCKS TO BOOK','Truck share','Trucks in shared load','Truck capacity','Risk','Risk reasons (worst line of the stop)']
 for i,t in enumerate(heads):
     c=P.cell(row=PH,column=1+i,value=t); c.font=f(9,True,WHITE); c.fill=fill(BLUE if t!='TRUCKS TO BOOK' else 'FF3232'); c.alignment=Alignment(wrap_text=True,horizontal='center',vertical='center'); c.border=BOX

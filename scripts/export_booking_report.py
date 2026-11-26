@@ -10,7 +10,7 @@ def frame(ws,hr,r1,ncol,key=0):
     df=pd.DataFrame(rows[1:],columns=rows[0]); return df[df.iloc[:,key].notna()&(df.iloc[:,key]!='')]
 plan=frame(wb['Weekly Booking Plan'],12,611,22,1).drop(columns=['#'])
 t=wb['Shipment Tracking']; hdr=[c.value for c in t[5]]
-trk=pd.DataFrame([[c.value for c in r] for r in t.iter_rows(min_row=6,max_row=1205,max_col=len(hdr))],columns=hdr)
+trk=pd.DataFrame([[c.value for c in r] for r in t.iter_rows(min_row=6,max_row=805,max_col=len(hdr))],columns=hdr)
 trk=trk[trk['Line ID'].notna()&(trk['Line ID']!='')]
 lines=trk[['Line ID','Order #','Customer','Delivery address','Country','Sending warehouse','Family type','DG / Non-DG','Mode','Pallets','Pallet source','TT (days)','TT basis','Shipment value (USD)','Doc close date','Pickup date (= doc close)','Binding WH closure start','Binding WH closure end','Arrival if shipped at doc close','Pickup week (Mon)','Assigned forwarder (rule)','Current forwarder (in system)','Forwarder check','Group trucks (est.)','Truck allocation (share)','Planning status','Risk indicator','Risk reasons']].copy()
 lines=lines.rename(columns={'Binding WH closure end':'WH reopens after','Binding WH closure start':'Customer WH closes from'})

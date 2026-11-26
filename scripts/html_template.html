@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Quarter-end truck planning</title>
+<style>
+:root{--blue:#00082E;--azure:#2E8FD6;--sky:#78BAE6;--ink:#232323;--gray:#696969;--line:#D5DCE8;--bg:#F3F6FB;--card:#fff;--red:#F7B6B6;--redt:#7A0000;--org:#FFD59A;--orgt:#7A4A00;--grn:#BFE3C8;--grnt:#1D5A33}
+@media (prefers-color-scheme:dark){:root{--ink:#E8ECF4;--gray:#A7B0C2;--line:#2A3552;--bg:#0A1022;--card:#121A33}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.4 Inter,"Segoe UI",system-ui,sans-serif}
+header{background:#00082E;color:#fff;padding:14px 20px 12px;border-bottom:4px solid #FF3232}
+header h1{margin:0;font-size:20px;font-weight:700}header p{margin:2px 0 0;color:var(--sky);font-size:12px}
+main{padding:14px 20px 40px;max-width:1700px;margin:0 auto}
+.filters{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px}
+.filters label{display:flex;flex-direction:column;font-size:11px;color:var(--gray);font-weight:600;gap:3px}
+.filters select,.filters input{font:inherit;font-size:13px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink)}
+.filters .btn{align-self:end}
+.ms{position:relative}.msb{width:100%;text-align:left;background:var(--card);color:var(--ink);border:1px solid var(--line);font-size:13px;padding:6px 8px;display:flex;justify-content:space-between;gap:6px}
+.msb.on{border-color:var(--azure);color:var(--azure);font-weight:700}
+.msp{display:none;position:absolute;z-index:20;top:100%;left:0;min-width:100%;width:max-content;max-width:340px;max-height:320px;overflow:auto;background:var(--card);border:1px solid var(--line);border-radius:6px;box-shadow:0 8px 24px rgba(0,8,46,.25);padding:6px;margin-top:2px}
+.ms.open .msp{display:block}.msp label{flex-direction:row;align-items:center;gap:6px;font-size:12px;color:var(--ink);font-weight:400;padding:3px 4px;white-space:nowrap}
+.msp label:hover{background:rgba(46,143,214,.1)}.msp .acts{display:flex;gap:6px;margin-bottom:4px}.msp .acts button{padding:2px 8px;font-size:11px}
+.msp input[type=search]{width:100%;margin-bottom:4px;padding:4px 6px;font-size:12px}
+button{font:inherit;font-size:13px;padding:7px 12px;border-radius:6px;border:1px solid var(--azure);background:var(--azure);color:#fff;cursor:pointer}
+button.ghost{background:transparent;color:var(--azure)}
+.kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin:12px 0}
+.kpi{background:var(--card);border:1px solid var(--line);border-top:3px solid var(--azure);border-radius:8px;padding:10px 12px}
+.kpi.r{border-top-color:#FF3232}.kpi b{display:block;font-size:24px;color:var(--blue)}@media (prefers-color-scheme:dark){.kpi b{color:#fff}}
+.kpi span{font-size:11px;color:var(--gray);font-weight:600;text-transform:none}
+.kpi small{display:block;font-size:11px;color:var(--gray)}
+.tabs{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid var(--line);margin-top:6px}
+.tabs button{background:transparent;color:var(--gray);border:0;border-bottom:3px solid transparent;border-radius:0;padding:9px 14px;font-weight:600}
+.tabs button.on{color:var(--azure);border-bottom-color:var(--azure)}
+.bar{display:flex;justify-content:space-between;align-items:center;margin:10px 0 6px;color:var(--gray);font-size:12px;gap:10px;flex-wrap:wrap}
+.wrap{overflow:auto;max-height:68vh;border:1px solid var(--line);border-radius:8px;background:var(--card)}
+table{border-collapse:separate;border-spacing:0;width:100%;font-size:12px}
+th{position:sticky;top:0;background:#00082E;color:#fff;text-align:left;padding:7px 8px;cursor:pointer;white-space:nowrap;z-index:1}
+th.num,td.num{text-align:right}td{padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap;max-width:340px;overflow:hidden;text-overflow:ellipsis}
+tr.wk td{border-top:2px solid var(--blue)}tr:hover td{background:rgba(46,143,214,.08)}
+td.big{font-weight:700;color:var(--azure)}
+.chip{display:inline-block;padding:1px 8px;border-radius:10px;font-weight:700;font-size:11px}
+.Red{background:var(--red);color:var(--redt)}.Orange{background:var(--org);color:var(--orgt)}.Green{background:var(--grn);color:var(--grnt)}
+.fw-MNT{color:var(--azure);font-weight:700}
+.charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:14px;margin:12px 0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px}.card h3{margin:0 0 8px;font-size:13px}
+.leg{display:flex;gap:12px;font-size:11px;color:var(--gray);margin-top:4px}.leg i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px}
+.note{font-size:11px;color:var(--gray);margin-top:10px}
+</style></head><body>
+<header><h1>Quarter-end truck planning &amp; shipment tracking</h1><p id="sub"></p></header>
+<main>
+<div class="filters" id="filters"></div>
+<div class="kpis" id="kpis"></div>
+<div class="tabs" id="tabs"></div>
+<div id="view"></div>
+<p class="note">Trucks are ESTIMATES: ROUNDUP(pallets / capacity) per load; MNT = direct truck per customer + address + day; DBS = pooled per warehouse + country + day + DG. Snapshot generated from the planning workbook - re-generate after the source data changes.</p>
+</main>
+<script>
+const D=/*DATA*/null;
+const S=D.stops,L=D.lines;
+const $=s=>document.querySelector(s);
+const fmtN=(v,d=0)=>v==null?'':v.toLocaleString('en-US',{maximumFractionDigits:d,minimumFractionDigits:d});
+const fmtD=s=>{if(!s)return'';const d=new Date(s+'T00:00:00');return d.toLocaleDateString('en-GB',{day:'2-digit',month:'short'})};
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+$('#sub').textContent=`Report date ${fmtD(D.meta.reportDate)} | capacity ${D.meta.capStd} pallets per truck (DG / CSS Battery ${D.meta.capDG}) | ${S.length} delivery stops, ${L.length} order lines`;
+const uniq=(a,k)=>[...new Set(a.map(x=>x[k]).filter(x=>x!=null&&x!==''))].sort();
+const MK=['week','whs','country','customer','fwd','cargo','risk','issue'];
+const F={week:[],whs:[],country:[],customer:[],fwd:[],cargo:[],risk:[],issue:[],from:'',to:'',q:''};
+const defs=[['week','Pickup week',uniq(L,'week').map(w=>[w,'Week of '+fmtD(w)])],['whs','Sending warehouse',uniq(L,'whs')],['country','Destination country',uniq(L,'country')],['customer','Customer',uniq(L,'customer')],['fwd','Forwarder',['DBS','MNT']],['cargo','Cargo type',['DG','Non-DG']],['risk','Risk',['Red','Orange','Green']],['issue','Issue',ISS()]];
+function ISS(){return['Missing pallets','TT not synced with WH closure','Wrong forwarder','Pickup date passed','Missing TT','Missing family type','Missing value','No WH closure data']}
+const fb=$('#filters');
+fb.innerHTML=defs.map(([k,l])=>`<label>${l}<div class="ms" id="ms_${k}"></div></label>`).join('')
+ +`<label>Pickup from<input type="date" id="f_from"></label><label>Pickup to<input type="date" id="f_to"></label><label>Search<input type="search" id="f_q" placeholder="customer, address, order..."></label><div class="btn"><button class="ghost" id="reset">Reset filters</button></div>`;
+function msLabel(k,l,opts){const n=F[k].length;if(!n)return 'All';if(n===1){const o=opts.find(x=>(Array.isArray(x)?x[0]:x)===F[k][0]);return Array.isArray(o)?o[1]:o}return n+' selected'}
+defs.forEach(([k,l,opts])=>{
+  const box=$('#ms_'+k);const val=x=>Array.isArray(x)?x[0]:x,lab=x=>Array.isArray(x)?x[1]:x;
+  box.innerHTML=`<button type="button" class="msb"><span class="t">All</span><span>▾</span></button><div class="msp">${opts.length>8?'<input type="search" placeholder="search...">':''}<div class="acts"><button type="button" class="ghost" data-a="all">Select all</button><button type="button" class="ghost" data-a="none">Clear</button></div>${opts.map(o=>`<label data-t="${esc(String(lab(o)).toLowerCase())}"><input type="checkbox" value="${esc(val(o))}"> ${esc(lab(o))}</label>`).join('')}</div>`;
+  const btn=box.querySelector('.msb'),panel=box.querySelector('.msp');
+  const sync=()=>{F[k]=[...panel.querySelectorAll('input[type=checkbox]:checked')].map(c=>c.value);btn.querySelector('.t').textContent=msLabel(k,l,opts);btn.classList.toggle('on',F[k].length>0);render()};
+  btn.onclick=e=>{e.stopPropagation();const o=box.classList.contains('open');document.querySelectorAll('.ms.open').forEach(x=>x.classList.remove('open'));if(!o)box.classList.add('open')};
+  panel.onclick=e=>e.stopPropagation();
+  panel.addEventListener('change',e=>{if(e.target.type==='checkbox')sync()});
+  panel.querySelectorAll('.acts button').forEach(b=>b.onclick=()=>{panel.querySelectorAll('label:not([hidden]) input[type=checkbox]').forEach(c=>c.checked=b.dataset.a==='all');if(b.dataset.a==='none')panel.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=false);sync()});
+  const si=panel.querySelector('input[type=search]');if(si)si.oninput=()=>{const q=si.value.toLowerCase();panel.querySelectorAll('label').forEach(l=>l.hidden=q&&!l.dataset.t.includes(q))};
+  box._reset=()=>{panel.querySelectorAll('input[type=checkbox]').forEach(c=>c.checked=false);F[k]=[];btn.querySelector('.t').textContent='All';btn.classList.remove('on')};
+});
+document.addEventListener('click',()=>document.querySelectorAll('.ms.open').forEach(x=>x.classList.remove('open')));
+['from','to','q'].forEach(k=>{const e=$('#f_'+k);e.addEventListener(k==='q'?'input':'change',()=>{F[k]=e.value.trim();render()})});
+$('#reset').onclick=()=>{MK.forEach(k=>$('#ms_'+k)._reset());['from','to','q'].forEach(k=>{F[k]='';$('#f_'+k).value=''});render()};
+const IK={'Missing pallets':'No pallet','TT not synced with WH closure':'NOT SYNCED','Wrong forwarder':'Wrong forwarder','Pickup date passed':'Pickup date passed','Missing TT':'No TT','Missing family type':'No family','Missing value':'No value','No WH closure data':'No WH closure'};
+function match(x,isLine){
+  const has=(k,v)=>!F[k].length||F[k].includes(v);
+  if(!has('week',x.week)||!has('whs',x.whs)||!has('country',x.country)||!has('customer',x.customer)||!has('fwd',x.fwd)||!has('cargo',x.cargo)||!has('risk',x.risk))return false;
+  const dd=isLine?x.docClose:x.pickup; if(F.from&&(!dd||dd<F.from))return false; if(F.to&&(!dd||dd>F.to))return false;
+  if(F.issue.length){ if(isLine){if(!x.issues.some(i=>F.issue.includes(i)))return false}else{if(!F.issue.some(i=>x.reasons.includes(IK[i])))return false}}
+  if(F.q){const t=(x.customer+' '+x.address+' '+(x.order||'')+' '+(x.id||'')+' '+x.country+' '+x.whs).toLowerCase();if(!t.includes(F.q.toLowerCase()))return false}
+  return true}
+let TAB='plan';const sortSt={};
+const tabs=[['plan','Booking plan (stops)'],['weekly','Weekly trucks'],['country','By country'],['lines','Shipment lines'],['issues','Exceptions']];
+$('#tabs').innerHTML=tabs.map(([k,l])=>`<button data-k="${k}">${l}</button>`).join('');
+$('#tabs').onclick=e=>{if(e.target.dataset.k){TAB=e.target.dataset.k;render()}};
+const chip=r=>r?`<span class="chip ${r}">${r}</span>`:'';
+const colsPlan=[['week','Week',v=>fmtD(v)],['pickup','Pickup',v=>fmtD(v)],['whs','Sending whs'],['country','Country'],['customer','Customer'],['address','Delivery address'],['cargo','Cargo'],['fwd','Fwd',v=>`<span class="fw-${v}">${v}</span>`,'raw'],['lines','Lines','n',0],['pallets','Pallets','n',0],['tt','TT','n',0],['value','Value USD','n',0],['closeFrom','WH closes from',v=>fmtD(v)],['reopen','WH reopens',v=>fmtD(v)],['arrival','Arrival',v=>fmtD(v)],['trucks','TRUCKS TO BOOK','n',0,'big'],['share','Truck share','n',2],['shared','Shared load','n',0],['risk','Risk',chip,'raw'],['reasons','Risk reasons']];
+const colsLines=[['id','Line'],['customer','Customer'],['address','Address'],['country','Country'],['whs','Sending whs'],['family','Family'],['cargo','Cargo'],['mode','Mode'],['pallets','Pallets','n',0],['palSrc','Pallet source'],['tt','TT','n',0],['value','Value USD','n',0],['docClose','Doc close',v=>fmtD(v)],['closeFrom','WH closes from',v=>fmtD(v)],['reopen','WH reopens',v=>fmtD(v)],['arrival','Arrival',v=>fmtD(v)],['fwd','Assigned fwd'],['curFwd','Current fwd'],['fwdCheck','Fwd check'],['status','Status'],['risk','Risk',chip,'raw'],['reasons','Risk reasons']];
+function table(id,cols,rows,wkBreak){
+  const st=sortSt[id];if(st){const [k,dir]=st;rows=[...rows].sort((a,b)=>{const x=a[k],y=b[k];if(x==null)return 1;if(y==null)return-1;return(x>y?1:x<y?-1:0)*dir})}
+  let prev=null;
+  const head=cols.map((c,i)=>`<th class="${c[2]==='n'?'num':''}" data-i="${i}">${c[1]}${st&&st[0]===c[0]?(st[1]>0?' ▲':' ▼'):''}</th>`).join('');
+  const body=rows.map(r=>{const wk=wkBreak&&prev!==null&&r.week!==prev;prev=r.week;
+    return `<tr class="${wk?'wk':''}">`+cols.map(c=>{let v=r[c[0]],out;
+      if(c[2]==='n')out=fmtN(v,c[3]);else if(typeof c[2]==='function')out=c[3]==='raw'?c[2](v):esc(c[2](v));else out=esc(v);
+      return `<td class="${c[2]==='n'?'num':''} ${c[4]||''}" title="${c[0]==='reasons'||c[0]==='address'||c[0]==='customer'?esc(v):''}">${out}</td>`}).join('')+'</tr>'}).join('');
+  return `<div class="wrap"><table id="${id}"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`}
+function bindSort(id,cols){const t=document.getElementById(id);if(!t)return;t.querySelector('thead').onclick=e=>{const th=e.target.closest('th');if(!th)return;const k=cols[th.dataset.i][0];const c=sortSt[id];sortSt[id]=[k,c&&c[0]===k?-c[1]:1];render()}}
+function csv(cols,rows,name){const q=v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"';const t=[cols.map(c=>q(c[1])).join(',')].concat(rows.map(r=>cols.map(c=>q(r[c[0]])).join(','))).join('\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['﻿'+t],{type:'text/csv'}));a.download=name;a.click()}
+function stack(weeks,series,colors,names){
+  const W=640,H=230,m={l:36,r:8,t:10,b:34},mx=Math.max(1,...weeks.map(w=>series.reduce((s,a)=>s+a[w],0)));
+  const bw=(W-m.l-m.r)/weeks.length;let g='';
+  for(let i=0;i<=4;i++){const y=m.t+(H-m.t-m.b)*(1-i/4);g+=`<line x1="${m.l}" x2="${W-m.r}" y1="${y}" y2="${y}" stroke="var(--line)"/><text x="${m.l-4}" y="${y+3}" font-size="9" text-anchor="end" fill="var(--gray)">${Math.round(mx*i/4)}</text>`}
+  weeks.forEach((w,i)=>{let y=H-m.b;series.forEach((a,si)=>{const h=(H-m.t-m.b)*a[w]/mx;y-=h;if(h>0)g+=`<rect x="${m.l+i*bw+bw*.15}" y="${y}" width="${bw*.7}" height="${h}" fill="${colors[si]}"><title>${names[si]}: ${a[w]}</title></rect>`});
+    const tot=series.reduce((s,a)=>s+a[w],0);if(tot)g+=`<text x="${m.l+i*bw+bw/2}" y="${y-3}" font-size="10" text-anchor="middle" fill="var(--ink)" font-weight="700">${tot}</text>`;
+    g+=`<text x="${m.l+i*bw+bw/2}" y="${H-m.b+13}" font-size="9" text-anchor="middle" fill="var(--gray)">${fmtD(w)}</text>`});
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%">${g}</svg>`}
+function hbar(items,color){const mx=Math.max(1,...items.map(i=>i[1]));return items.map(([k,v])=>`<div style="display:flex;align-items:center;gap:8px;margin:3px 0;font-size:12px"><span style="width:110px;color:var(--gray)">${esc(k)}</span><div style="flex:1;background:var(--line);height:12px;border-radius:3px"><div style="width:${100*v/mx}%;height:12px;background:${color};border-radius:3px"></div></div><b style="width:52px;text-align:right">${fmtN(v)}</b></div>`).join('')}
+function render(){
+  const fs=S.filter(x=>match(x,false)),fl=L.filter(x=>match(x,true));
+  const sum=(a,k)=>a.reduce((s,x)=>s+(x[k]||0),0);
+  const trD=sum(fs.filter(x=>x.fwd==='DBS'),'trucks'),trM=sum(fs.filter(x=>x.fwd==='MNT'),'trucks');
+  const rc=r=>fl.filter(x=>x.risk===r).length;
+  $('#kpis').innerHTML=[['TRUCKS TO BOOK (est.)',fmtN(trD+trM),'DBS '+fmtN(trD)+' | MNT '+fmtN(trM),'r'],['Pallets',fmtN(sum(fs,'pallets')),'DG '+fmtN(sum(fs.filter(x=>x.cargo==='DG'),'pallets'))+' | Non-DG '+fmtN(sum(fs.filter(x=>x.cargo!=='DG'),'pallets'))],['Shipment value','$'+fmtN(sum(fs,'value')/1e6,2)+'M',''],['Delivery stops',fmtN(fs.length),fmtN(sum(fs,'lines'))+' order lines'],['Critical (red)',fmtN(rc('Red')),'order lines'],['Attention (orange)',fmtN(rc('Orange')),'order lines'],['On track (green)',fmtN(rc('Green')),'order lines'],['TT not synced',fmtN(fl.filter(x=>x.issues.includes('TT not synced with WH closure')).length),'arrival inside WH closure']]
+   .map(([l,v,s,c])=>`<div class="kpi ${c||''}"><span>${l}</span><b>${v}</b><small>${s}</small></div>`).join('');
+  document.querySelectorAll('#tabs button').forEach(b=>b.classList.toggle('on',b.dataset.k===TAB));
+  let h='';
+  if(TAB==='plan'){h=`<div class="bar"><span>${fmtN(fs.length)} stops - sorted by week and pickup date (click a header to sort)</span><button id="exp">Export CSV</button></div>`+table('t_plan',colsPlan,fs,!sortSt.t_plan)}
+  else if(TAB==='lines'){h=`<div class="bar"><span>${fmtN(fl.length)} order lines</span><button id="exp">Export CSV</button></div>`+table('t_lines',colsLines,fl,false)}
+  else if(TAB==='issues'){const ex=fl.filter(x=>x.issues.length);const cols=[['issues','Issues',v=>v.join('; ')],...colsLines];ex.forEach(x=>x.issueTxt=x.issues.join('; '));cols[0]=['issueTxt','Issues'];h=`<div class="bar"><span>${fmtN(ex.length)} order lines with a data or planning issue</span><button id="exp">Export CSV</button></div>`+table('t_issues',cols,ex,false);window._cols=cols;window._rows=ex}
+  else if(TAB==='weekly'){
+    const weeks=[...new Set(fs.map(x=>x.week))].sort();const mk=f=>{const o={};weeks.forEach(w=>o[w]=sum(fs.filter(x=>x.week===w&&f(x)),'trucks'));return o};
+    const d=mk(x=>x.fwd==='DBS'),m=mk(x=>x.fwd==='MNT'),dg=mk(x=>x.cargo==='DG'),nd=mk(x=>x.cargo!=='DG');
+    const rows=weeks.map(w=>({week:w,stops:fs.filter(x=>x.week===w).length,pallets:sum(fs.filter(x=>x.week===w),'pallets'),dbs:d[w],mnt:m[w],dg:dg[w],nd:nd[w],tot:d[w]+m[w]}));
+    const wc=[['week','Week of',v=>fmtD(v)],['stops','Stops','n',0],['pallets','Pallets','n',0],['dbs','Trucks DBS','n',0],['mnt','Trucks MNT','n',0],['dg','Trucks DG','n',0],['nd','Trucks Non-DG','n',0],['tot','TOTAL trucks','n',0,'big']];
+    h=`<div class="charts"><div class="card"><h3>Estimated trucks per pickup week - by forwarder</h3>${stack(weeks,[d,m],['#00082E','#78BAE6'],['DBS','MNT'])}<div class="leg"><span><i style="background:#00082E"></i>DBS</span><span><i style="background:#78BAE6"></i>MNT</span></div></div><div class="card"><h3>Estimated trucks per pickup week - DG vs Non-DG</h3>${stack(weeks,[nd,dg],['#2E8FD6','#FF3232'],['Non-DG','DG'])}<div class="leg"><span><i style="background:#2E8FD6"></i>Non-DG</span><span><i style="background:#FF3232"></i>DG</span></div></div></div>`+`<div class="bar"><span>Trucks by week (follows the filters)</span><button id="exp">Export CSV</button></div>`+table('t_week',wc,rows,false);window._cols=wc;window._rows=rows}
+  else if(TAB==='country'){
+    const cs=uniq(fs,'country');const rows=cs.map(c=>{const a=fs.filter(x=>x.country===c);return{country:c,stops:a.length,pallets:sum(a,'pallets'),value:sum(a,'value'),dbs:sum(a.filter(x=>x.fwd==='DBS'),'trucks'),mnt:sum(a.filter(x=>x.fwd==='MNT'),'trucks'),tot:sum(a,'trucks')}}).sort((a,b)=>b.pallets-a.pallets);
+    const cc=[['country','Country'],['stops','Stops','n',0],['pallets','Pallets','n',0],['value','Value USD','n',0],['dbs','Trucks DBS','n',0],['mnt','Trucks MNT','n',0],['tot','TOTAL trucks','n',0,'big']];
+    h=`<div class="charts"><div class="card"><h3>Pallets by destination country</h3>${hbar(rows.map(r=>[r.country,r.pallets]),'#2E8FD6')}</div><div class="card"><h3>Estimated trucks by destination country</h3>${hbar(rows.map(r=>[r.country,r.tot]),'#00082E')}</div></div><div class="bar"><span>By destination country (follows the filters)</span><button id="exp">Export CSV</button></div>`+table('t_country',cc,rows,false);window._cols=cc;window._rows=rows}
+  $('#view').innerHTML=h;
+  const map={plan:['t_plan',colsPlan,fs,'booking_plan.csv'],lines:['t_lines',colsLines,fl,'shipment_lines.csv'],issues:['t_issues',window._cols,window._rows,'exceptions.csv'],weekly:['t_week',window._cols,window._rows,'weekly_trucks.csv'],country:['t_country',window._cols,window._rows,'by_country.csv']}[TAB];
+  bindSort(map[0],map[1]);const b=$('#exp');if(b)b.onclick=()=>{const st=sortSt[map[0]];let r=map[2];if(st)r=[...r].sort((a,b)=>{const x=a[st[0]],y=b[st[0]];return(x>y?1:x<y?-1:0)*st[1]});csv(map[1],r,map[3])}}
+render();
+</script></body></html>
