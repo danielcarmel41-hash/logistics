@@ -91,8 +91,8 @@ params=[
  (11,'High pallet volume threshold (pallets per line)',20,'ASSUMPTION: a line at/above this needs extra truck capacity.','n','HighPallet'),
  (12,'Long TT: TT as % of remaining delivery window',0.5,'ASSUMPTION: flag when TT uses at least this share of the days left before the customer closes.','p','LongTTPct'),
  (13,'Tight buffer before customer WH closure (days)',2,'ASSUMPTION: arrival within this many days of closure = tight.','n','TightBuf'),
- (14,'MNT trucks dedicated per customer? (Yes / No)','No','ASSUMPTION: No = trucks pooled per country/day/DG for both forwarders. Yes = separate MNT truck per customer.','t','MNTperCust'),
- (15,'Batteries to OTHER countries also to MNT? (Yes / No)','No','See note 3 - the Hebrew note is ambiguous. No = follow the written rule (only NL/DE/PL/UK batteries -> MNT).','t','BattOtherMNT'),
+ (14,'MNT dedicated truck per customer + delivery address? (Yes / No)','Yes','CONFIRMED BY USER: MNT runs direct trucks per customer and per delivery address. DBS trucks stay pooled per country / day / DG.','t','MNTperCust'),
+ (15,'Batteries to OTHER countries also to MNT? (Yes / No)','Yes','CONFIRMED BY USER: all CSS Batteries go with MNT, whatever the country. Set to No to limit MNT batteries to the country list below.','t','BattOtherMNT'),
  (16,'First week shown in forecast (a Monday)',dt.datetime(2026,11,16),'Forecast shows 12 weeks from this Monday.','d','FcstStart'),
 ]
 for r,lab,val,note,typ,nm in params:
@@ -121,7 +121,7 @@ for col,n in (('A',6),('C',4),('E',5),('G',10)):
         c=S[f'{col}{21+i}']; c.fill=INPUT_FILL; c.font=INPUT_FONT; c.border=BOX
 name('MNTBatt',f"{SN}$A$21:$A$26"); name('MNTAll',f"{SN}$C$21:$C$24")
 name('DGFam',f"{SN}$E$21:$E$25"); name('Holidays',f"{SN}$G$21:$G$30")
-S['A32']='Rule applied: MNT = all UK shipments + DG (CSS Battery) shipments to the countries in the first list. DBS = everything else.'; S['A32'].font=f(9,c=GRAY)
+S['A32']='Rule applied: MNT = all UK shipments + all DG (CSS Battery) shipments (B15 = Yes; if No, only to the countries in the first list). DBS = everything else.'; S['A32'].font=f(9,c=GRAY)
 S['A33']='DG assumption: the source files have no DG flag, so Family Type = "Battery" (CSS Battery) is treated as DG; every other family is Non-DG.'; S['A33'].font=f(9,c=GRAY)
 
 sect(S,35,'3. Destination countries and dedicated-truck TT (MNT)',9)
@@ -157,12 +157,12 @@ sect(S,114,'5. Notes and interpretations to confirm',9)
 notes=[
  'Source model: SE REP (REP_364) is the master list - one row per order line. Pallets come from Backlog_NL column BZ "# of Pallets per line - roundup", joined on SE Order# + Line#. Lines not found there have NO pallets (not invented) and are flagged red.',
  'Pallets are the sum of per-line round-ups (as instructed). Because every line is rounded up on its own, pallet and truck totals can be higher than the physical count.',
- 'Forwarder rule: the written brief says CSS Battery to NL/DE/PL/UK -> MNT, all UK -> MNT, everything else DBS. One Hebrew note can be read as "batteries to other countries also MNT" - switch B15 to Yes to test that reading.',
+ 'Forwarder rule (confirmed): all UK -> MNT, all CSS Battery (DG) -> MNT in every country, everything else -> DBS. MNT trucks are direct, one per customer + delivery address; DBS trucks are pooled per country / day / DG.',
  'Planning date: Scheduled Ship Date (col F of SE REP) is the shipping-document close date. Its 00:59:59 time stamps are end-of-previous-day (they match the Backlog "Date" column), so the workbook uses date minus 1 hour. Weekend / holiday dates move back to the previous working day.',
- 'Required pickup = document close date, or earlier when arrival (pickup + TT) would fall inside a customer warehouse closure window - then pickup is moved back so delivery lands on the last open day before closure.',
+ 'Pickup cannot be brought forward: pickup date = document close date. When pickup + TT lands inside a customer warehouse closure, the line is flagged RED ("TT not synced") and the workbook shows the latest pickup that would still meet the closure, so the team can ask for the document close date to be changed.',
  'Customer closures come from "Close WH - Christmas 2026" (sheet Summary 2026). Customers can have several windows; the workbook checks every window, so a customer that reopens between two closures is handled. "Final WH close in Q" = start of the latest window that begins on/before quarter end.',
  'Trucks = ROUNDUP(pallets / capacity) per group of Country + Forwarder + DG/Non-DG + pickup date. Only LAND lines are trucked; SEA/AIR lines are listed but need no truck.',
- 'Risk colours: RED = missing pallets/TT/date, pickup date already passed, or wrong forwarder. ORANGE = pickup within the approaching window, high pallet volume, long TT vs window, tight buffer, missing value / closure data, non-standard forwarder. GREEN = none of these.',
+ 'Risk colours: RED = missing pallets/TT/date, pickup date already passed, wrong forwarder, or TT not synced with document close + customer WH closure. ORANGE = pickup within the approaching window, high pallet volume, long TT vs window, tight buffer, missing value / closure data, non-standard forwarder. GREEN = none of these.',
  'Capacity: the Tracking sheet is pre-built for 1,200 order lines (SE_REP rows 2-1201) and Backlog_NL rows 2-3000. Paste a refreshed SE REP export over SE_REP and a refreshed Backlog over Backlog_NL (same columns) and everything updates.',
 ]
 for i,t in enumerate(notes):
@@ -189,7 +189,8 @@ clos={
 'Ecostal Yomatec':('France','WH close: 18-31/12, 1-4/1',[w(18,12,4,1)],'Merged contiguous ranges.'),
 'Edmundson Electrical Ltd':('United Kingdom','WH close: 24/12/26 - 04/01/27',[w(24,12,4,1)],''),
 'Emil Loeffelhardt GmbH & Co. KG':('Germany','WH close: 24/12-1/1',[w(24,12,1,1)],'Some SE REP lines say 24/12-3/1 - Close WH file used.'),
-'Energy3000 Solar GmbH':('Austria','Muellendorf: WH close 11/12-06/1 | Ennsdorf: WH close 21/12-06/1',[w(21,12,6,1)],'Two sites. Ennsdorf (21/12-6/1) used - matches SE REP. Muellendorf closes from 11/12: check which site each line goes to.'),
+'Energy3000 Solar GmbH':('Austria','Muellendorf: WH close 11/12-06/1 | Ennsdorf: WH close 21/12-06/1',[w(21,12,6,1)],'Ennsdorf site (all current lines). Other site: see Müllendorf row (key customer|city).'),
+'Energy3000 Solar GmbH|Müllendorf':('Austria','Muellendorf: WH close 11/12-06/1',[w(11,12,6,1)],'Site key = customer|Ship-To city. Reopens 7/1. Used only if a line ships to a Ship-To city named Müllendorf.'),
 'KENO Sp. z o.o.':('Poland','WH close: 29-31/12, 1-11/1',[w(29,12,11,1)],''),
 'Koninklijke Oosterberg B.V.':('Netherlands','WH close Apeldoorn: 18(midday), 24(midday), 25, 31(midday), 01/01',[w(18,12,18,12),w(24,12,25,12),w(31,12,1,1)],'Midday closures treated as full days.'),
 'Krannich Solar AG':('Switzerland','WH close: 18/12-4/1',[w(18,12,4,1)],''),
@@ -214,7 +215,7 @@ clos={
 'Vaillant GmbH':('Germany','WH close: 23/12-27/12; 30/12-01/01',[w(23,12,27,12),w(30,12,1,1)],''),
 'Fankhauser Solar AG':('Switzerland','WH close: 23/12-27/12; 31/12-03/01',[w(23,12,27,12),w(31,12,3,1)],''),
 }
-for i,t in enumerate(['Customer (SE REP name)','Country','Source','Source comment','Start 1','Start 2','Start 3','Start 4','End 1','End 2','End 3','End 4','Note']):
+for i,t in enumerate(['Customer (SE REP name) or customer|Ship-To city','Country','Source','Source comment','Start 1','Start 2','Start 3','Start 4','End 1','End 2','End 3','End 4','Note']):
     c=H.cell(row=4,column=i+1,value=t); c.font=f(10,True,WHITE); c.fill=fill(BLUE)
 for i,(cu,(co,txt,wins,note)) in enumerate(clos.items()):
     r=5+i
@@ -253,32 +254,32 @@ add('O','TT basis',16,None,'=IF([AF]=0,"",IF([K]="MNT","MNT dedicated TT","DBS t
 add('P','Final WH close in Q',12,'dd-mmm-yy','=IF(OR([AF]=0,[AK]=0),"",IFERROR(1/(1/SUMPRODUCT(MAX(INDEX(WH_Start,[AJ],0)*(INDEX(WH_Start,[AJ],0)<=QEnd)))),""))')
 add('Q','Binding WH closure start',12,'dd-mmm-yy','=IF(OR([AF]=0,[AL]=0),"",IF([AL]>[AK],"",INDEX(WH_Start,[AJ],[AL])))')
 add('R','Arrival if shipped at doc close',12,'dd-mmm-yy','=IF(OR([AF]=0,[I]="",[N]=""),"",IF(TTMode="Business",WORKDAY([I],[N],Holidays),[I]+[N]))')
-add('S','Required pickup date',12,'dd-mmm-yy','=IF(OR([AF]=0,[I]=""),"",IF(AND([Q]<>"",[N]<>"",[R]<>""),IF([R]>=[Q],MIN([I],WORKDAY(IF(TTMode="Business",WORKDAY(WORKDAY([Q],-1,Holidays),-[N],Holidays),WORKDAY([Q],-1,Holidays)-[N])+1,-1,Holidays)),[I]),[I]))')
+add('S','Pickup date (= doc close)',12,'dd-mmm-yy','=IF(OR([AF]=0,[I]=""),"",[I])')
 add('T','Days to pickup',8,'0','=IF([S]="","",[S]-ReportDate)')
-add('U','Buffer days before WH closure',11,'0','=IF(OR([Q]="",[R]="",[S]=""),"",IF([S]<[I],"",[Q]-1-[R]))')
+add('U','Days arrival vs last open day (neg = in closure)',12,'0','=IF(OR([Q]="",[R]=""),"",[Q]-1-[R])')
 add('V','Truck capacity',8,'0','=IF([AF]=0,"",IF([J]="DG",CapDG,CapStd))')
-add('W','Truck group key',22,None,'=IF(OR([AF]=0,[F]<>"LAND",NOT(ISNUMBER([G])),[S]=""),"",IF([G]<=0,"",[D]&"|"&[K]&"|"&[J]&"|"&[S]&IF(AND(MNTperCust="Yes",[K]="MNT"),"|"&[C],"")))')
+add('W','Truck group key',22,None,'=IF(OR([AF]=0,[F]<>"LAND",NOT(ISNUMBER([G])),[S]=""),"",IF([G]<=0,"",[D]&"|"&[K]&"|"&[J]&"|"&[S]&IF(AND(MNTperCust="Yes",[K]="MNT"),"|"&LEFT([C],40)&"|"&[BA],"")))')
 add('X','Group pallets',8,'0','=IF([W]="","",SUMIFS([G:],[W:],[W]))')
 add('Y','Group trucks (est.)',9,'0','=IF([W]="","",ROUNDUP([X]/[V],0))')
 add('Z','Trucks counted once',9,'0','=IF([W]="","",IF(COUNTIF($W$'+str(R0)+':[W],[W])=1,[Y],0))')
 add('AA','Truck allocation (share)',10,'0.00','=IF([W]="","",[Y]*[G]/[X])')
 add('AB','Pickup week (Mon)',11,'dd-mmm-yy','=IF([S]="","",[S]-WEEKDAY([S],2)+1)')
-add('AC','Planning status',24,None,'=IF([AF]=0,"",IF(OR([G]="",[N]="",[I]=""),"Incomplete data",IF([F]<>"LAND","Non-truck mode ("&[F]&")",IF([S]<ReportDate,"Overdue - ship now",IF([S]-ReportDate<=ApproachDays,"Pickup due soon",IF([S]<[I],"Pull-forward (WH closure)","Planned"))))))')
-add('AD','Risk reasons',60,None,'=IF([AF]=0,"",IF([G]="","No pallet data; ","")&IF([N]="","No TT; ","")&IF([I]="","No doc close date; ","")&IF([E]="","No family type; ","")&IF([H]="","No value; ","")&IF([AK]=0,"No WH closure data; ","")&IF([M]="WRONG FORWARDER","Wrong forwarder (rule: "&[K]&"); ","")&IF([M]="Non-standard forwarder","Non-standard forwarder; ","")&IF([AM]=1,IF([S]<[I],"Pickup date passed - WH closure missed; ","Pickup date passed; "),"")&IF([AN]=1,"Pickup within "&ApproachDays&" days; ","")&IF([AO]=1,"High pallet volume; ","")&IF([AP]=1,"Long TT vs delivery window; ","")&IF([AQ]=1,"Tight WH buffer; ",""))')
-add('AE','Risk indicator',10,None,'=IF([AF]=0,"",IF(OR([G]="",[N]="",[I]="",[AM]=1,[M]="WRONG FORWARDER"),"Red",IF(OR([AN]=1,[AO]=1,[AP]=1,[AQ]=1,[H]="",[AK]=0,[E]="",[M]="Non-standard forwarder"),"Orange","Green")))')
+add('AC','Planning status',24,None,'=IF([AF]=0,"",IF(OR([G]="",[N]="",[I]=""),"Incomplete data",IF([F]<>"LAND","Non-truck mode ("&[F]&")",IF([S]<ReportDate,"Overdue - ship now",IF([BC]=1,"TT not synced with WH closure",IF([S]-ReportDate<=ApproachDays,"Pickup due soon","Planned"))))))')
+add('AD','Risk reasons',60,None,'=IF([AF]=0,"",IF([G]="","No pallet data; ","")&IF([N]="","No TT; ","")&IF([I]="","No doc close date; ","")&IF([E]="","No family type; ","")&IF([H]="","No value; ","")&IF([AK]=0,"No WH closure data; ","")&IF([M]="WRONG FORWARDER","Wrong forwarder (rule: "&[K]&"); ","")&IF([M]="Non-standard forwarder","Non-standard forwarder; ","")&IF([AM]=1,"Pickup date passed; ","")&IF([BC]=1,"TT NOT SYNCED: pickup "&TEXT([I],"dd-mmm")&" + "&[N]&"d TT = arrival "&TEXT([R],"dd-mmm")&", inside customer WH closure from "&TEXT([Q],"dd-mmm")&" (latest pickup to fit: "&TEXT([BD],"dd-mmm")&"); ","")&IF([AN]=1,"Pickup within "&ApproachDays&" days; ","")&IF([AO]=1,"High pallet volume; ","")&IF([AP]=1,"Long TT vs delivery window; ","")&IF([AQ]=1,"Tight WH buffer; ",""))')
+add('AE','Risk indicator',10,None,'=IF([AF]=0,"",IF(OR([G]="",[N]="",[I]="",[AM]=1,[BC]=1,[M]="WRONG FORWARDER"),"Red",IF(OR([AN]=1,[AO]=1,[AP]=1,[AQ]=1,[H]="",[AK]=0,[E]="",[M]="Non-standard forwarder"),"Orange","Green")))')
 # helpers
 add('AF','Active (1/0)',7,'0','=IF('+R('Line Number')+'="",0,1)')
 add('AG','Line suffix',9,None,'=IF([AF]=0,"",SUBSTITUTE([A],[B]&"_",""))')
 add('AH','Backlog row (exact)',9,'0','=IF([AF]=0,"",SUMPRODUCT((BL_Ord&""=[B])*(BL_Line&""=[AG])*(ROW(BL_Ord)-1)))')
 add('AI','Backlog row used',9,'0','=IF([AF]=0,0,IF([AH]>0,[AH],IF(RIGHT([AG],2)="-1",SUMPRODUCT((BL_Ord&""=[B])*(BL_Line&""=LEFT([AG],LEN([AG])-2))*(ROW(BL_Ord)-1)),0)))')
-add('AJ','WH sheet row',8,'0','=IF([AF]=0,"",IFERROR(MATCH([C],WH_Cust,0),0))')
+add('AJ','WH sheet row',8,'0','=IF([AF]=0,"",IFERROR(MATCH([C]&"|"&[BB],WH_Cust,0),IFERROR(MATCH([C],WH_Cust,0),0)))')
 add('AK','# closure windows',8,'0','=IF(OR([AF]=0,[AJ]=0),0,COUNT(INDEX(WH_End,[AJ],0)))')
 add('AL','Binding window #',8,'0','=IF(OR([R]="",[AK]=0),0,COUNTIF(INDEX(WH_End,[AJ],0),"<"&[R])+1)')
 add('AM','Overdue flag',7,'0','=IF([AF]=0,0,IF(AND(ISNUMBER([S]),[S]<ReportDate),1,0))')
 add('AN','Approaching flag',7,'0','=IF([AF]=0,0,IF(AND(ISNUMBER([S]),[S]>=ReportDate,[S]-ReportDate<=ApproachDays),1,0))')
 add('AO','High pallet flag',7,'0','=IF([AF]=0,0,IF(AND(ISNUMBER([G]),[G]>=HighPallet),1,0))')
 add('AP','Long TT flag',7,'0','=IF([AF]=0,0,IF(OR([Q]="",[N]=""),0,IF(ReportDate<[Q]-1,IF(IF(TTMode="Business",[N]*7/5,[N])>=LongTTPct*([Q]-1-ReportDate),1,0),0)))')
-add('AQ','Tight buffer flag',7,'0','=IF([AF]=0,0,IF(AND([U]<>"",[U]<=TightBuf),1,0))')
+add('AQ','Tight buffer flag',7,'0','=IF([AF]=0,0,IF(AND([U]<>"",[U]>=0,[U]<=TightBuf),1,0))')
 add('AR','In dashboard filter',8,'0','=IF([AF]=0,0,IF(AND(OR(SelCountry="All",[D]=SelCountry),OR(SelFwd="All",[K]=SelFwd),OR(SelDG="All",[J]=SelDG),OR(SelFrom="",AND(ISNUMBER([S]),[S]>=SelFrom)),OR(SelTo="",AND(ISNUMBER([S]),[S]<=SelTo))),1,0))')
 add('AS','Row id',6,'0','=ROW()')
 add('AT','Sort key',9,'0','=IF([S]="",99999,[S])')
@@ -288,6 +289,10 @@ add('AW','Missing pallet flag',7,'0','=IF(AND([AF]=1,[G]=""),1,0)')
 add('AX','Missing pallet rank',7,'0','=IF([AW]=1,COUNTIFS([AW:],1,[AS:],"<"&[AS])+1,"")')
 add('AY','No-closure customer (first line)',8,'0','=IF(AND([AF]=1,[AK]=0),IF(COUNTIFS($C$'+str(R0)+':[C],[C],$AK$'+str(R0)+':[AK],0)=1,1,0),0)')
 add('AZ','No-closure customer rank',7,'0','=IF([AY]=1,COUNTIFS([AY:],1,[AS:],"<"&[AS])+1,"")')
+add('BA','Ship-to zip + city',16,None,'=IF([AF]=0,"",LEFT('+R('Ship To Zip')+'&" "&'+R('Ship To City')+',40))')
+add('BB','Ship-to city',14,None,'=IF([AF]=0,"",'+R('Ship To City')+'&"")')
+add('BC','TT-WH sync conflict flag',8,'0','=IF([AF]=0,0,IF(AND([Q]<>"",[R]<>""),IF([R]>=[Q],1,0),0))')
+add('BD','Latest pickup that meets WH closure',12,'dd-mmm-yy','=IF(OR([AF]=0,[Q]="",[N]=""),"",WORKDAY(IF(TTMode="Business",WORKDAY(WORKDAY([Q],-1,Holidays),-[N],Holidays),WORKDAY([Q],-1,Holidays)-[N])+1,-1,Holidays))')
 from openpyxl.utils import column_index_from_string as CI
 keys=[c[0] for c in cols]
 # order columns by letter
@@ -316,14 +321,14 @@ for key,header,width,fmt,formula in cols:
 T.row_dimensions[HR].height=42
 T.freeze_panes=f'D{R0}'
 T.auto_filter.ref=f"A{HR}:{L(CI('AE'))}{R1}"
-T.column_dimensions.group('AF','AZ',hidden=True,outline_level=1)
+T.column_dimensions.group('AF','BD',hidden=True,outline_level=1)
 # conditional formats
 rng=f"AE{R0}:AE{R1}"
 T.conditional_formatting.add(rng,CellIsRule(operator='equal',formula=['"Red"'],fill=RED_F,font=Font(name=FONT,bold=True,color='7A0000')))
 T.conditional_formatting.add(rng,CellIsRule(operator='equal',formula=['"Orange"'],fill=ORG_F,font=Font(name=FONT,bold=True,color='7A4A00')))
 T.conditional_formatting.add(rng,CellIsRule(operator='equal',formula=['"Green"'],fill=GRN_F,font=Font(name=FONT,bold=True,color='1D5A33')))
-T.conditional_formatting.add(f"AC{R0}:AC{R1}",FormulaRule(formula=[f'OR(LEFT($AC{R0},7)="Overdue",$AC{R0}="Incomplete data")'],fill=RED_F))
-T.conditional_formatting.add(f"AC{R0}:AC{R1}",FormulaRule(formula=[f'OR($AC{R0}="Pickup due soon",LEFT($AC{R0},12)="Pull-forward")'],fill=ORG_F))
+T.conditional_formatting.add(f"AC{R0}:AC{R1}",FormulaRule(formula=[f'OR(LEFT($AC{R0},7)="Overdue",$AC{R0}="Incomplete data",LEFT($AC{R0},10)="TT not syn")'],fill=RED_F))
+T.conditional_formatting.add(f"AC{R0}:AC{R1}",FormulaRule(formula=[f'$AC{R0}="Pickup due soon"'],fill=ORG_F))
 T.conditional_formatting.add(f"AC{R0}:AC{R1}",FormulaRule(formula=[f'$AC{R0}="Planned"'],fill=GRN_F))
 T.conditional_formatting.add(f"M{R0}:M{R1}",FormulaRule(formula=[f'$M{R0}="WRONG FORWARDER"'],fill=RED_F))
 T.conditional_formatting.add(f"M{R0}:M{R1}",FormulaRule(formula=[f'$M{R0}="Non-standard forwarder"'],fill=ORG_F))
@@ -381,7 +386,7 @@ card(7,'J','TRUCKS - DBS',f'=SUMIFS({TR("Z")},{INF},1,{TR("K")},"DBS")','#,##0',
 card(7,'L','TRUCKS - MNT',f'=SUMIFS({TR("Z")},{INF},1,{TR("K")},"MNT")','#,##0','="MNT pallets "&TEXT(SUMIFS('+TR("G")+','+INF+',1,'+TR("K")+',"MNT"),"#,##0")')
 bkw=lambda: ('SUMPRODUCT((BkDate<>"")*(IF(SelFrom="",0,SelFrom-6)<=BkDate)*(BkDate<=IF(SelTo="",99999,SelTo))*(BkTrucks))')
 card(12,'B','APPROACHING PICKUP',f'=COUNTIFS({INF},1,{TR("AN")},1)','#,##0','="pickup within "&ApproachDays&" days of report date"',accent='F59E0B')
-card(12,'D','AT RISK (DATE PASSED)',f'=COUNTIFS({INF},1,{TR("AM")},1)','#,##0','="required date missed - ship now"',accent='FF3232')
+card(12,'D','TT NOT SYNCED (WH CLOSE)',f'=COUNTIFS({INF},1,{TR("BC")},1)','#,##0','="arrival in closure | date passed: "&COUNTIFS('+INF+',1,'+TR("AM")+',1)',accent='FF3232')
 card(12,'F','CRITICAL (RED)',f'=COUNTIFS({INF},1,{TR("AE")},"Red")','#,##0','="pallets "&TEXT(SUMIFS('+TR("G")+','+INF+',1,'+TR("AE")+',"Red"),"#,##0")',accent='FF3232')
 card(12,'H','ATTENTION (ORANGE)',f'=COUNTIFS({INF},1,{TR("AE")},"Orange")','#,##0','="pallets "&TEXT(SUMIFS('+TR("G")+','+INF+',1,'+TR("AE")+',"Orange"),"#,##0")',accent='F59E0B')
 card(12,'J','ON TRACK (GREEN)',f'=COUNTIFS({INF},1,{TR("AE")},"Green")','#,##0','="pallets "&TEXT(SUMIFS('+TR("G")+','+INF+',1,'+TR("AE")+',"Green"),"#,##0")',accent='22A06B')
@@ -467,7 +472,7 @@ for a in ('showSerName','showCatName','showLegendKey','showPercent'): setattr(ch
 D_.add_chart(ch5,'J38')
 # top urgent table
 UR=56
-D_[f'B{UR-1}']='Top 10 critical shipments (RED, follows filters, earliest pickup first)'; D_[f'B{UR-1}'].font=f(11,True,BLUE)
+D_[f'B{UR-1}']='Top 10 critical shipments (RED, follows filters, earliest pickup first) - see Risk reasons for TT / WH-closure conflicts'; D_[f'B{UR-1}'].font=f(11,True,BLUE)
 uh=['#','Line ID','Customer','Country','Pallets','DG','Forwarder','Pickup by','Days','Risk reasons']
 ucol=[2,3,4,6,7,8,9,10,11,12]
 for t,cn in zip(uh,ucol):
@@ -495,7 +500,7 @@ for r in range(DT-2,DT+30): pass
 W=wsW
 for i,wd in enumerate([13,13,8]+[11]*20): W.column_dimensions[L(i+1)].width=wd
 W['A1']='Weekly truck forecast'; W['A1'].font=f(18,True,BLUE)
-W['A2']='Grouped by REQUIRED PICKUP week (document close date, moved earlier where a customer closure requires it). Trucks = ROUNDUP(pallets / capacity) per country + forwarder + DG + pickup day, then summed. All values are ESTIMATES until entered as confirmed bookings (Settings, section 4).'
+W['A2']='Grouped by PICKUP week (= document close date; pickup cannot be brought forward). Trucks = ROUNDUP(pallets / capacity) per country + forwarder + DG + pickup day, then summed. All values are ESTIMATES until entered as confirmed bookings (Settings, section 4).'
 W['A2'].font=f(9,c=GRAY)
 heads=['Week start (Mon)','Week end (Sun)','ISO wk','Lines','Pallets','DG pallets','Non-DG pallets','Trucks DBS','Trucks MNT','Trucks DG','Trucks Non-DG','TOTAL est. trucks','Confirmed trucks','Still to book','Note']
 for i,t in enumerate(heads):
